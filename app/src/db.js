@@ -27,7 +27,22 @@ CREATE TABLE IF NOT EXISTS tenants (
   agent_tone TEXT DEFAULT 'acolhedor e objetivo',
   agent_instructions TEXT DEFAULT '',
   automation_active INTEGER NOT NULL DEFAULT 1,
-  automation_cost_monthly REAL NOT NULL DEFAULT 3000,
+  automation_cost_monthly REAL NOT NULL DEFAULT 0, -- legado (não usado)
+  welcome_message TEXT,
+  policies TEXT,             -- regras gerais que o agente informa (chegada, documentos, atraso...)
+  insurances TEXT,           -- convênios aceitos (um por linha)
+  payment_methods TEXT DEFAULT 'Pix, cartão de crédito/débito e dinheiro',
+  min_advance_hours REAL NOT NULL DEFAULT 2,   -- antecedência mínima para agendar
+  max_advance_days INTEGER NOT NULL DEFAULT 60,-- até quantos dias à frente
+  slot_step_min INTEGER NOT NULL DEFAULT 15,   -- granularidade dos horários
+  cancel_min_hours REAL NOT NULL DEFAULT 12,   -- cancelar/remarcar sozinho até X horas antes
+  options_count INTEGER NOT NULL DEFAULT 2,    -- quantas opções de horário oferecer
+  quiet_start TEXT NOT NULL DEFAULT '20:00',   -- não enviar mensagens proativas entre
+  quiet_end TEXT NOT NULL DEFAULT '08:00',
+  reoffer_cancel INTEGER NOT NULL DEFAULT 1,   -- após cancelamento, oferecer nova data
+  waitlist_enabled INTEGER NOT NULL DEFAULT 1, -- lista de espera / encaixe automático
+  reactivation_days INTEGER NOT NULL DEFAULT 10, -- tratamento parado há X dias → convidar a retomar
+  return_reminder INTEGER NOT NULL DEFAULT 1,  -- avisar quando chega a hora do retorno
   reminder_hours_before INTEGER NOT NULL DEFAULT 24,
   noshow_recovery INTEGER NOT NULL DEFAULT 1,
   auto_book_package INTEGER NOT NULL DEFAULT 1,
@@ -45,7 +60,10 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS professionals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  name TEXT NOT NULL, specialty TEXT, registry TEXT, color TEXT DEFAULT '#3b82f6',
+  name TEXT NOT NULL, specialty TEXT, council TEXT, registry TEXT, color TEXT DEFAULT '#3b82f6',
+  email TEXT, phone TEXT, bio TEXT,
+  commission_pct REAL NOT NULL DEFAULT 0,       -- repasse padrão (%)
+  buffer_min INTEGER NOT NULL DEFAULT 0,        -- intervalo entre atendimentos deste profissional
   schedule_json TEXT NOT NULL DEFAULT '{}',
   active INTEGER NOT NULL DEFAULT 1
 );
@@ -53,8 +71,16 @@ CREATE TABLE IF NOT EXISTS services (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   name TEXT NOT NULL, description TEXT,
+  category TEXT DEFAULT 'Consultas',
   duration_min INTEGER NOT NULL DEFAULT 60,
+  buffer_min INTEGER NOT NULL DEFAULT 0,        -- preparo/limpeza da sala após o procedimento
   price REAL NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0,                 -- custo direto (insumos, material)
+  modality TEXT NOT NULL DEFAULT 'presencial',  -- presencial | online | ambos
+  preparation TEXT,                             -- orientações de preparo enviadas ao cliente
+  return_days INTEGER NOT NULL DEFAULT 0,       -- retorno incluso em até X dias
+  online_booking INTEGER NOT NULL DEFAULT 1,    -- o agente/cliente pode agendar sozinho
+  min_age INTEGER, max_age INTEGER,
   is_entry INTEGER NOT NULL DEFAULT 0,         -- serviço "porta de entrada" (ex.: avaliação)
   package_sessions INTEGER NOT NULL DEFAULT 0, -- nº de sessões do pacote após a entrada
   package_session_price REAL NOT NULL DEFAULT 0,
@@ -68,6 +94,9 @@ CREATE TABLE IF NOT EXISTS services (
 CREATE TABLE IF NOT EXISTS professional_services (
   professional_id INTEGER NOT NULL REFERENCES professionals(id) ON DELETE CASCADE,
   service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  duration_min INTEGER,  -- personalização: este profissional leva X minutos neste procedimento
+  price REAL,            -- personalização: preço deste profissional
+  commission_pct REAL,   -- personalização: repasse deste procedimento
   PRIMARY KEY (professional_id, service_id)
 );
 CREATE TABLE IF NOT EXISTS clients (
@@ -102,7 +131,10 @@ CREATE TABLE IF NOT EXISTS appointments (
   start TEXT NOT NULL, end TEXT NOT NULL,  -- horário local da empresa: YYYY-MM-DDTHH:MM
   status TEXT NOT NULL DEFAULT 'pendente', -- pendente | confirmado | realizado | faltou | cancelado | remarcado
   price REAL NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0,        -- custo direto no momento do agendamento
+  commission REAL NOT NULL DEFAULT 0,  -- repasse ao profissional (R$)
   created_by TEXT NOT NULL DEFAULT 'recepcao', -- agente | recepcao | cliente
+  cancelled_by TEXT, cancel_reason TEXT,
   rescheduled_from INTEGER,
   reminder_sent INTEGER NOT NULL DEFAULT 0,
   recovery_sent INTEGER NOT NULL DEFAULT 0,
@@ -155,6 +187,21 @@ CREATE TABLE IF NOT EXISTS payments (
   amount REAL NOT NULL, method TEXT DEFAULT 'pix', status TEXT DEFAULT 'pago',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS waitlist (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  professional_id INTEGER, period TEXT, date_from TEXT, notes TEXT,
+  status TEXT NOT NULL DEFAULT 'aguardando', -- aguardando | oferecido | atendido | cancelado
+  offered_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS security_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER, kind TEXT NOT NULL, source TEXT, detail TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS integrations (
   tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   key TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, config_json TEXT NOT NULL DEFAULT '{}',
@@ -166,6 +213,21 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);
+
+// Migração leve: adiciona colunas novas em bancos já existentes
+for (const [table, ddl] of Object.entries({
+  tenants: ['welcome_message TEXT', 'policies TEXT', 'insurances TEXT', "payment_methods TEXT", 'min_advance_hours REAL NOT NULL DEFAULT 2', 'max_advance_days INTEGER NOT NULL DEFAULT 60',
+    'slot_step_min INTEGER NOT NULL DEFAULT 15', 'cancel_min_hours REAL NOT NULL DEFAULT 12', 'options_count INTEGER NOT NULL DEFAULT 2', "quiet_start TEXT NOT NULL DEFAULT '20:00'",
+    "quiet_end TEXT NOT NULL DEFAULT '08:00'", 'reoffer_cancel INTEGER NOT NULL DEFAULT 1', 'waitlist_enabled INTEGER NOT NULL DEFAULT 1', 'reactivation_days INTEGER NOT NULL DEFAULT 10', 'return_reminder INTEGER NOT NULL DEFAULT 1'],
+  professionals: ['council TEXT', 'email TEXT', 'phone TEXT', 'bio TEXT', 'commission_pct REAL NOT NULL DEFAULT 0', 'buffer_min INTEGER NOT NULL DEFAULT 0'],
+  services: ["category TEXT DEFAULT 'Consultas'", 'buffer_min INTEGER NOT NULL DEFAULT 0', 'cost REAL NOT NULL DEFAULT 0', "modality TEXT NOT NULL DEFAULT 'presencial'", 'preparation TEXT',
+    'return_days INTEGER NOT NULL DEFAULT 0', 'online_booking INTEGER NOT NULL DEFAULT 1', 'min_age INTEGER', 'max_age INTEGER'],
+  professional_services: ['duration_min INTEGER', 'price REAL', 'commission_pct REAL'],
+  appointments: ['cost REAL NOT NULL DEFAULT 0', 'commission REAL NOT NULL DEFAULT 0', 'cancelled_by TEXT', 'cancel_reason TEXT'],
+})) {
+  const cols = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+  for (const d of ddl) if (!cols.has(d.split(' ')[0])) db.exec(`ALTER TABLE ${table} ADD COLUMN ${d}`);
+}
 
 // Helpers
 export const all = (sql, ...p) => db.prepare(sql).all(...p);

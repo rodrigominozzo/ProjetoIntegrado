@@ -56,3 +56,5 @@ body { background: radial-gradient(1000px 500px at 50% -10%, #10261a, transparen
 .slots { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .slots button { padding: 8px; }
 .slots button.sel { border-color: var(--green); color: var(--green); }
+
+.page .btn { white-space: normal; text-align: left; flex-wrap: wrap; gap: 4px 8px; }

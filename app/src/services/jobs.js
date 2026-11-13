@@ -1,27 +1,27 @@
-// Rotinas automáticas: lembretes antes do horário e recuperação de faltas ("se alguém falta, a IA remarca na hora").
+// Rotinas automáticas (a cada minuto): lembretes, reposição de faltas/cancelamentos, encaixes, reativação, retornos.
 import { all, update } from '../db.js';
-import { nowLocal, addMin, fmtRelativo, fmtHora } from './time.js';
-import { nextSlotSameProfessional } from './scheduling.js';
+import { nowLocal, addMin, fmtRelativo } from './time.js';
 import { getConversation, addMessage, setState, logStep } from './conversations.js';
+import { canSendNow, offerReplacement, fillFromWaitlist, reactivateTreatments, returnReminders } from './proactive.js';
 
-export function runJobs() {
+export function runJobs({ force = false } = {}) {
   const now = nowLocal();
-  const out = { lembretes: 0, faltas_detectadas: 0, recuperacoes: 0 };
-
-  const quiet = now.slice(11) < '08:00' || now.slice(11) >= '20:00'; // não incomodar de madrugada
+  const out = { lembretes: 0, reposicoes: 0, encaixes: 0, reativacoes: 0, retornos: 0 };
   for (const tenant of all('SELECT * FROM tenants WHERE automation_active=1')) {
-    // 1) Lembretes: agendamentos dentro da janela (ex.: 24h antes)
+    if (!force && !canSendNow(tenant, now)) continue; // respeita o horário silencioso
+
+    // 1) Lembretes X horas antes (só para agendamentos criados há mais de 2h)
     const limit = addMin(now, tenant.reminder_hours_before * 60);
-    const due = all(`SELECT a.*, p.name professional_name, s.name service_name, c.name client_name FROM appointments a
+    const due = all(`SELECT a.*, p.name professional_name, s.name service_name, s.preparation, c.name client_name FROM appointments a
       JOIN professionals p ON p.id=a.professional_id JOIN services s ON s.id=a.service_id JOIN clients c ON c.id=a.client_id
-      WHERE a.tenant_id=? AND a.status IN ('pendente','confirmado') AND a.reminder_sent=0 AND a.start > ? AND a.start <= ? AND a.created_at <= datetime('now','-2 hours')`, tenant.id, now, limit);
-    if (quiet) due.length = 0;
+      WHERE a.tenant_id=? AND a.status IN ('pendente','confirmado') AND a.reminder_sent=0 AND a.start > ? AND a.start <= ?
+      AND a.created_at <= datetime('now','-2 hours')`, tenant.id, now, limit);
     for (const a of due) {
       const conv = getConversation(tenant.id, a.client_id);
       const when = fmtRelativo(a.start, now);
       addMessage(conv, {
         sender: 'agente', type: 'options',
-        content: `Oi${a.client_name ? ', ' + a.client_name.split(' ')[0] : ''}! Lembrete: ${a.service_name} ${when} com ${a.professional_name}. Posso confirmar sua presença?`,
+        content: `Oi${a.client_name ? ', ' + a.client_name.split(' ')[0] : ''}! Lembrete: ${a.service_name} ${when} com ${a.professional_name}.${a.preparation ? '\nPreparo: ' + a.preparation : ''}\nPosso confirmar sua presença?`,
         meta: { options: [{ id: 1, label: 'Confirmar' }, { id: 2, label: 'Remarcar' }], kind: 'reminder', appointment_id: a.id },
       });
       setState(conv, { pending: { kind: 'reminder', appointment_id: a.id, when } });
@@ -30,30 +30,21 @@ export function runJobs() {
       out.lembretes++;
     }
 
-    // 2) Recuperação de falta: status "faltou" ainda sem contato
-    if (tenant.noshow_recovery) {
-      const missed = all(`SELECT a.*, c.name client_name FROM appointments a JOIN clients c ON c.id=a.client_id
-        WHERE a.tenant_id=? AND a.status='faltou' AND a.recovery_sent=0`, tenant.id);
-      for (const a of missed) recoverNoShow(tenant, a, out);
+    // 2) Faltas e cancelamentos ainda sem reposição → oferece nova data
+    const lost = all(`SELECT id, status, cancelled_by, start FROM appointments WHERE tenant_id=? AND recovery_sent=0 AND
+      ((status='faltou' AND ?) OR (status='cancelado' AND ? AND cancelled_by IN ('cliente','clinica') AND start >= datetime(?, '-1 day')))`,
+    tenant.id, tenant.noshow_recovery ? 1 : 0, tenant.reoffer_cancel ? 1 : 0, now);
+    for (const a of lost) {
+      const reason = a.status === 'faltou' ? 'falta' : a.cancelled_by === 'clinica' ? 'cancelamento_clinica' : 'cancelamento_cliente';
+      if (offerReplacement(a.id, reason)) out.reposicoes++;
+      if (a.status === 'cancelado' && fillFromWaitlist(a.id)) out.encaixes++;
     }
+
+    // 3) Tratamentos parados e retornos inclusos
+    out.reativacoes += reactivateTreatments(tenant);
+    if (tenant.return_reminder) out.retornos += returnReminders(tenant);
   }
   return out;
-}
-
-export function recoverNoShow(tenant, a, out = {}) {
-  const slot = nextSlotSameProfessional(a);
-  const conv = getConversation(tenant.id, a.client_id);
-  update('appointments', a.id, { recovery_sent: 1 });
-  if (!slot) return;
-  const nome = a.client_name ? a.client_name.split(' ')[0] : '';
-  addMessage(conv, {
-    sender: 'agente', type: 'options',
-    content: `Oi${nome ? ', ' + nome : ''}! Sentimos sua falta hoje. Quer remarcar pra ${fmtRelativo(slot.start)}?`,
-    meta: { options: [{ id: 1, label: `Quero sim (${fmtHora(slot.start)})` }, { id: 2, label: 'Outro horário' }], kind: 'recovery', appointment_id: a.id },
-  });
-  setState(conv, { pending: { kind: 'recovery', appointment_id: a.id, slot } });
-  logStep(tenant.id, conv.id, 'recuperacao_falta', { appointment_id: a.id, sugerido: slot.start });
-  out.recuperacoes = (out.recuperacoes || 0) + 1;
 }
 
 export function startJobs(intervalMs = 60_000) {
@@ -61,4 +52,3 @@ export function startJobs(intervalMs = 60_000) {
   setTimeout(tick, 3000);
   return setInterval(tick, intervalMs);
 }
-
