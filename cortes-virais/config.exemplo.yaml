@@ -1,0 +1,48 @@
+# Copie para config.yaml. Tudo aqui é opcional: o que faltar usa o padrão de cortes/config.py.
+idioma: pt
+
+fontes:
+  # Canais (ID que começa com UC...) que você tem autorização para cortar.
+  # O modo automático acompanha as lives e gravações deles.
+  canais_autorizados: []
+  # Com true, o modo automático só usa os canais acima. Com false e a lista vazia,
+  # ele busca no YouTube inteiro pelas lives/vídeos com mais exibições.
+  exigir_autorizacao: true
+  duracao_max_h: 6
+  busca:
+    consultas: ["live"]
+    regiao: BR
+    max_resultados: 10
+    dias: 2
+
+cortes:
+  duracao: 30            # segundos
+  por_video: 5
+  formato: vertical_blur # vertical_blur | vertical_crop | original
+  legendas: true
+
+ia:
+  ativa: true
+  modelo: claude-opus-5-5
+  nota_minima: 60        # 0–100; cortes abaixo disso são descartados
+
+live:
+  limiar: 4.0            # menor = mais cortes (e mais falsos positivos)
+  pre: 22                # segundos antes do pico
+  pos: 8                 # segundos depois
+  espera: 90             # intervalo mínimo entre cortes da mesma live
+  max_simultaneas: 2
+
+publicar:
+  creditar_fonte: true
+  intervalo_min: 30      # espaçamento entre posts de vídeos gravados (lives publicam na hora)
+  youtube:
+    ativo: true
+    privacidade: public  # public | unlisted | private
+    max_por_dia: 6
+  instagram:
+    ativo: true
+    max_por_dia: 20
+
+auto:
+  intervalo_min: 30      # a cada quanto tempo procurar lives e vídeos novos

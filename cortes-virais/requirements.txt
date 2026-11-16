@@ -1,0 +1,10 @@
+yt-dlp
+numpy
+PyYAML
+requests
+anthropic
+google-api-python-client
+google-auth-oauthlib
+# Opcionais (recomendados):
+# chat-downloader    -> chat de lives em tempo real
+# faster-whisper     -> legendas quando o vídeo não tem legenda do YouTube (e em lives)
