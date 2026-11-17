@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import chat, desempenho, fontes, ia, render, sinais, transcricao
+from . import chat, desempenho, fontes, ia, narracao, render, sinais, transcricao
 from .banco import Banco
 
 log = logging.getLogger(__name__)
@@ -22,13 +22,20 @@ def finalizar(c: dict, video: Path, contexto: dict, cfg: dict, banco: Banco, pas
     creditar = cfg["publicar"]["creditar_fonte"] and canal
     saida = pasta / f"corte_{int(c['inicio']):06d}.mp4"
     momento = c.get("momento")
+    voz = None
+    if c.get("narracao") and narracao.disponivel(cfg):
+        arq_voz = saida.with_suffix(".narracao.wav")
+        dur_voz = narracao.sintetizar(c["narracao"], arq_voz, cfg)
+        if dur_voz:
+            voz = {"arquivo": arq_voz, "duracao": dur_voz, "texto": c["narracao"],
+                   "volume": cfg["narracao"]["volume"], "fundo": cfg["narracao"]["fundo"]}
     feito = render.renderizar(
         video, ini, fim, saida, formato=cfg["cortes"]["formato"], palavras=palavras,
         credito=f"Créditos: {canal}" if creditar else "",
         gancho=c.get("gancho", "") if cfg["cortes"]["gancho"] else "",
         marca=cfg["cortes"]["marca"], palavras_chave=c.get("palavras_chave"),
         momento=None if momento is None else ini + momento,
-        abrir_com_pico=bool(c.get("abrir_com_pico")),
+        abrir_com_pico=bool(c.get("abrir_com_pico")), narracao=voz,
         cfg_cortes=cfg["cortes"], cfg_edicao=cfg["edicao"],
     )
     layout = feito["layout"]
@@ -40,7 +47,7 @@ def finalizar(c: dict, video: Path, contexto: dict, cfg: dict, banco: Banco, pas
         video_id=contexto["id"], origem=origem, inicio=c["inicio"], fim=c["fim"], nota=c["nota"],
         titulo=c["titulo"], descricao=descricao, hashtags=c["hashtags"], arquivo=saida,
         urgente=urgente, teste=bool(contexto.get("teste")), gancho=c.get("gancho", ""),
-        notas=c.get("notas"), layout=layout)
+        notas=c.get("notas"), layout=layout, narracao=c["narracao"] if voz else "")
     log.info("Corte %s pronto: [%.0fs–%.0fs] nota %.0f — %s", corte_id, c["inicio"], c["fim"],
              c["nota"], c["titulo"])
     return corte_id

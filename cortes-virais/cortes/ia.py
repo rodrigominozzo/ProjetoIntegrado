@@ -40,6 +40,11 @@ Escreva, no idioma pedido:
 - descricao: 1 ou 2 frases com contexto e, no fim, um único convite à ação (por exemplo,
   seguir o canal). Um só: vários pedidos juntos fazem a pessoa ignorar todos.
 - hashtags: de 3 a 6, sem o '#', misturando o tema específico e o geral.
+- narracao: uma frase de até 14 palavras, que um narrador do canal diz nos primeiros
+  segundos por cima do vídeo. É a contribuição própria do canal: dê o contexto que falta
+  a quem não viu o resto e um olhar seu sobre por que o momento é notável. Não descreva o
+  que já se vê, não repita o gancho, não entregue o desfecho. Se o trecho abre com uma
+  fala que não pode ser coberta, ou não há nada útil a acrescentar, devolva vazio.
 
 Direção de edição (o programa monta o vídeo a partir destas três respostas):
 - momento_chave: em que segundo, contado do início atual do candidato, acontece o ápice
@@ -87,6 +92,7 @@ ESQUEMA = {
                     "titulo": {"type": "string"},
                     "descricao": {"type": "string"},
                     "hashtags": {"type": "array", "items": {"type": "string"}},
+                    "narracao": {"type": "string"},
                     "motivo": {"type": "string"},
                     "momento_chave": {"type": "number"},
                     "abrir_com_pico": {"type": "boolean"},
@@ -95,7 +101,7 @@ ESQUEMA = {
                     "ajuste_fim": {"type": "number"},
                 },
                 "required": ["indice", "aprovado", "nota", "notas", "gancho_texto", "titulo",
-                             "descricao", "hashtags", "motivo", "momento_chave",
+                             "descricao", "hashtags", "narracao", "motivo", "momento_chave",
                              "abrir_com_pico", "palavras_chave", "ajuste_inicio", "ajuste_fim"],
                 "additionalProperties": False,
             },
@@ -144,7 +150,7 @@ def sem_ia(candidatos: list[dict], contexto: dict) -> list[dict]:
             "titulo": base[:70], "descricao": f"Momento {i + 1} de: {base}",
             "hashtags": ["shorts", "cortes", "viral"], "motivo": "sem IA: ordenado pelos sinais",
             "gancho": "", "notas": {}, "momento": None, "abrir_com_pico": False,
-            "palavras_chave": [],
+            "palavras_chave": [], "narracao": "",
         })
     return resultado
 
@@ -266,6 +272,7 @@ def avaliar(candidatos: list[dict], contexto: dict, video: str | Path, cfg: dict
             notas={k: max(0, min(100, item["notas"][k])) for k in CRITERIOS},
             momento=momento, abrir_com_pico=item["abrir_com_pico"],
             palavras_chave=item["palavras_chave"][:4],
+            narracao=" ".join(item["narracao"].split()[:18]),
             motivo=item["motivo"], inicio=max(0.0, c["inicio"] + ai), fim=c["fim"] + af,
         )
         if "inicio_arquivo" in c:

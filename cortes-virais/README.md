@@ -50,6 +50,21 @@ pela IA, ou o pico de volume), o sistema monta uma sequência de planos:
 - **Acabamento:** gancho com entrada animada, legenda karaokê com palavras-chave em
   destaque, barra de progresso, nome do canal no canto.
 
+### Narração do canal (opcional)
+
+A IA escreve uma frase de abertura — contexto e um olhar próprio sobre o trecho — e uma
+voz sintética local a diz nos primeiros segundos, com o áudio original abaixado e a
+frase na legenda. Para ligar:
+
+```bash
+pip install piper-tts
+python -m piper.download_voices pt_BR-faber-medium --download-dir vozes
+```
+
+Depois ative "Narrar a abertura dos cortes" na aba Configurações. A voz roda no seu
+computador, sem conta nem custo. Quando o trecho abre com uma fala que não pode ser
+coberta, a IA deixa o corte sem narração.
+
 ### Bases de conhecimento
 
 Arquivos `.md` na pasta `conhecimento/`, editáveis na aba Configurações. A IA recebe uma
@@ -144,7 +159,10 @@ Para rodar 24 h, deixe `python -m cortes auto` num servidor (systemd, tmux ou Do
 - **Monetização.** O YouTube nega monetização a "conteúdo reutilizado" mesmo com
   autorização do dono, e passou a distribuir menos os Shorts repostados. Gancho, legenda
   e reenquadramento ajudam na retenção, mas o que a política pede é contribuição própria
-  (comentário, narração, análise). Isso o sistema ainda não gera.
+  (comentário, narração, análise). A narração de abertura vai nessa direção, mas uma
+  frase por vídeo, com voz sintética, é pouco: o YouTube também nega monetização a
+  conteúdo "inautêntico" produzido em série por modelo. Trate a narração como apoio, e
+  não como garantia de aprovação.
 - **Sem chat nem "mais repetidos"** (vídeo comum, pouco assistido), a detecção usa só o
   áudio, e a IA passa a ser o filtro principal.
 

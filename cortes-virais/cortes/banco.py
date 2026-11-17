@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS opcoes (chave TEXT PRIMARY KEY, valor TEXT);
 # Colunas acrescentadas depois da primeira versão.
 MIGRACOES = ["teste INTEGER DEFAULT 0", "yt_link TEXT", "ig_link TEXT", "gancho TEXT",
              "notas TEXT", "layout TEXT", "yt_vistas INTEGER", "yt_curtidas INTEGER",
-             "ig_vistas INTEGER", "ig_curtidas INTEGER"]
+             "ig_vistas INTEGER", "ig_curtidas INTEGER", "narracao TEXT"]
 MAX_TENTATIVAS = 3
 
 
@@ -68,14 +68,14 @@ class Banco:
     # --- cortes ---
     def novo_corte(self, *, video_id, origem, inicio, fim, nota, titulo, descricao,
                    hashtags, arquivo, urgente=False, teste=False, gancho="", notas=None,
-                   layout="") -> int:
+                   layout="", narracao="") -> int:
         cur = self._exec(
             "INSERT INTO cortes (video_id, origem, inicio, fim, nota, titulo, descricao, hashtags,"
-            " arquivo, urgente, teste, gancho, notas, layout, criado)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " arquivo, urgente, teste, gancho, notas, layout, narracao, criado)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (video_id, origem, inicio, fim, nota, titulo, descricao, json.dumps(hashtags),
              str(arquivo), int(urgente), int(teste), gancho, json.dumps(notas or {}), layout,
-             time.time()),
+             narracao, time.time()),
         )
         return cur.lastrowid
 

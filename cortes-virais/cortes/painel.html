@@ -371,6 +371,7 @@ function cartaoCorte(c) {
       <div class="linha"><span class="nota">${Math.round(c.nota)}</span><span class="sub">nota · ${tempo(c.inicio)}–${tempo(c.fim)} · ${ha(c.criado)}</span></div>
       <h4>${e(c.titulo)}</h4>
       ${c.gancho ? `<div class="sub">Gancho: “${e(c.gancho)}”</div>` : ""}
+      ${c.narracao ? `<div class="sub">Narração: “${e(c.narracao)}”</div>` : ""}
       ${criterios(c.notas)}
       <div class="linha">${c.teste ? '<span class="selo teste">Teste</span>' : seloPlataforma("YouTube", c.yt) + seloPlataforma("Instagram", c.ig)}</div>
       <div class="acoes">
@@ -475,7 +476,7 @@ function desenharConfig() {
       <li>Acompanhe na aba Análises. Ao terminar, “Ver análise” mostra cada trecho considerado e por quê.</li>
       <li>Assista aos cortes na aba Cortes. Gostou de um? “Aprovar e publicar”.</li>
       <li>Se vieram cortes demais ou fracos, suba a “Nota mínima”; se vieram de menos, baixe.</li></ol>`, primeiro === 4)}
-    <div class="sub" style="margin-top:10px">Recursos opcionais: enquadramento que segue rostos ${a.rostos ? "✓ instalado" : "— instale com <code>pip install \"opencv-python-headless&lt;5\"</code>"} · legendas automáticas ${a.whisper ? "✓ instaladas" : "— instale com <code>pip install faster-whisper</code>"} · chat de lives — <code>pip install chat-downloader</code>.</div>
+    <div class="sub" style="margin-top:10px">Recursos opcionais: enquadramento que segue rostos ${a.rostos ? "✓ instalado" : "— instale com <code>pip install \"opencv-python-headless&lt;5\"</code>"} · legendas automáticas ${a.whisper ? "✓ instaladas" : "— instale com <code>pip install faster-whisper</code>"} · chat de lives — <code>pip install chat-downloader</code> · narração ${a.voz.instalada && a.voz.arquivo ? "✓ voz instalada" : "— <code>pip install piper-tts</code> e depois <code>python -m piper.download_voices pt_BR-faber-medium --download-dir vozes</code>"}.</div>
   </div>`;
   const secoes = a.secoes.map(s => `<div class="cartao secao-config"><h2>${e(s.titulo)}</h2><div class="sub" style="margin-bottom:6px">${e(s.descricao)}</div>
     ${s.campos.map(c => `<div class="campo"><label>${e(c.rotulo)}</label><div class="sub">${e(c.ajuda)}</div><div class="entrada">${entrada(c)}</div></div>`).join("")}</div>`).join("");

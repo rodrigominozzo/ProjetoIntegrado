@@ -17,8 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import (ajustes, conhecimento, desempenho, enquadramento, fontes, ia, publicar,
-               transcricao, vod)
+from . import (ajustes, conhecimento, desempenho, enquadramento, fontes, ia, narracao,
+               publicar, transcricao, vod)
 from .banco import MAX_TENTATIVAS, Banco
 from .live import MonitorLive
 
@@ -184,6 +184,7 @@ class Gerenciador:
                 "teste": bool(c["teste"]), "criado": c["criado"],
                 "existe": Path(c["arquivo"]).exists(), "gancho": c["gancho"] or "",
                 "notas": json.loads(c["notas"] or "{}"), "layout": c["layout"] or "",
+                "narracao": c["narracao"] or "",
             }
             for p in ("yt", "ig"):
                 if c[f"{p}_id"]:
@@ -236,6 +237,8 @@ class Gerenciador:
             "instagram": publicar.conectado("ig", self.cfg),
             "ia": ia.disponivel(self.cfg), "rostos": enquadramento.disponivel(),
             "whisper": transcricao.whisper_disponivel(),
+            "voz": {"instalada": narracao.instalado(),
+                    "arquivo": Path(self.cfg["narracao"]["voz"]).exists()},
             "tem_cortes": bool(self.banco.todos_cortes()),
             "bases": [{"nome": b["nome"], "conteudo": b["bruto"], "sempre": b["sempre"],
                        "palavras": b["palavras"]} for b in conhecimento.listar(self.cfg)],

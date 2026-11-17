@@ -36,6 +36,13 @@ edicao:
   abertura_pico: true    # a IA pode abrir com 1,5 s do ápice
   barra_progresso: true
 
+narracao:
+  ativa: false           # frase de abertura dita por voz sintética local (Piper)
+  voz: vozes/pt_BR-faber-medium.onnx
+  velocidade: 1.05
+  volume: 1.0
+  fundo: 0.25            # volume do vídeo enquanto a narração fala
+
 ia:
   ativa: true
   nota_minima: 60        # 0–100; cortes abaixo disso são descartados

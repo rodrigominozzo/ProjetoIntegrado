@@ -294,3 +294,33 @@ def test_ajustes_validam_e_gravam(tmp_path):
         ajustes.salvar(cfg, {"cortes.duracao_min": 60, "cortes.duracao_max": 30}, arq)
     assert cfg["cortes"]["duracao_min"] == 20                 # nada foi aplicado no erro
     assert sum(len(s["campos"]) for s in ajustes.descrever(cfg)) >= 30
+
+
+def test_narracao_de_abertura(video, tmp_path):
+    from cortes import narracao, render
+
+    cfg = _cfg(tmp_path)
+    assert not narracao.disponivel(cfg)                       # desligada por padrão
+    assert narracao.sintetizar("Olá", tmp_path / "x.wav", cfg) is None
+
+    voz = tmp_path / "voz.wav"                                # voz de mentira: tom de 880 Hz
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=880:d=2",
+                    str(voz)], check=True)
+    falas = [(20 + i * 0.5, 20.4 + i * 0.5, f"p{i}") for i in range(16)]
+    feito = render.renderizar(
+        video, 20, 30, tmp_path / "c.mp4", formato="vertical_blur", palavras=falas,
+        narracao={"arquivo": voz, "duracao": 2.0, "texto": "Contexto dito pelo canal",
+                  "volume": 1.0, "fundo": 0.2},
+        cfg_cortes=cfg["cortes"], cfg_edicao=cfg["edicao"])
+    ass = (tmp_path / "c.ass").read_text()
+    assert "CONTEXTO DITO PELO" in ass
+    assert "P0" not in ass and "P3" not in ass and "P6" in ass    # falas cobertas saem da legenda
+
+    def nivel(inicio):                                        # volume em torno de 880 Hz
+        saida = subprocess.run(
+            ["ffmpeg", "-ss", str(inicio), "-t", "1.5", "-i", str(feito["arquivo"]), "-af",
+             "bandpass=f=880:width_type=h:w=60,volumedetect", "-f", "null", "-"],
+            capture_output=True, text=True).stderr
+        return float(saida.split("mean_volume:")[1].split()[0])
+
+    assert nivel(0.3) > nivel(5) + 20                         # a voz só existe na abertura

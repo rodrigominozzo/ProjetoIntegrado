@@ -52,6 +52,13 @@ PADRAO = {
         "abertura_pico": True,     # permite abrir com 1,5 s do ápice (a IA decide quando)
         "barra_progresso": True,
     },
+    "narracao": {
+        "ativa": False,            # frase de abertura dita por voz sintética local
+        "voz": "vozes/pt_BR-faber-medium.onnx",
+        "volume": 1.0,
+        "velocidade": 1.05,
+        "fundo": 0.25,             # volume do áudio original enquanto a narração fala
+    },
     "conhecimento": {"pasta": "conhecimento"},
     "live": {
         "limiar": 4.0,

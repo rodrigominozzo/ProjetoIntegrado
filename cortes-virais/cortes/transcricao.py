@@ -109,7 +109,8 @@ def _cor_ass(hexa: str) -> str:
 def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: int, altura: int,
               credito: str = "", gancho: str = "", posicao: dict | None = None,
               karaoke: bool = True, cor_destaque: str = "#FFE000", marca: str = "",
-              palavras_chave: list[str] | None = None, cor_chave: str = "#3CFF7A") -> str:
+              palavras_chave: list[str] | None = None, cor_chave: str = "#3CFF7A",
+              narracao: tuple[str, float, float] | None = None) -> str:
     """Legendas no estilo de vídeos curtos: blocos de até 3 palavras, com a palavra falada
     em destaque (karaokê), gancho fixo no topo e crédito discreto no rodapé."""
     vertical = altura > largura
@@ -146,9 +147,21 @@ def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: i
                       f"{{\\fad(120,0)\\fscx85\\fscy85\\t(0,160,\\fscx100\\fscy100)}}{_limpar(gancho)}")
     chaves = {_normal(k) for k in (palavras_chave or [])}
     cor_k = _cor_ass(cor_chave)
+    livre = 0.0  # as falas só voltam à legenda depois que a narração termina
+    if narracao:
+        texto_n, t0_n, dur_n = narracao
+        termos_n = _limpar(texto_n).upper().split()
+        grupos = [termos_n[i:i + 3] for i in range(0, len(termos_n), 3)]
+        for i, g in enumerate(grupos):  # legenda da narração, em outra cor
+            a, b = t0_n + dur_n * i / len(grupos), t0_n + dur_n * (i + 1) / len(grupos)
+            linhas.append(f"Dialogue: 1,{_tempo(a)},{_tempo(b)},Fala,,0,0,0,,"
+                          f"{{\\c&HFFE9A8&\\i1}}{' '.join(g)}")
+        livre = t0_n + dur_n + 0.15
     bloco: list[Palavra] = []
     blocos: list[list[Palavra]] = []
     for p in recorte(palavras, inicio, inicio + duracao):
+        if p[0] - inicio < livre:
+            continue
         if bloco and (len(bloco) >= 3 or p[0] - bloco[0][0] > 1.4 or p[0] - bloco[-1][1] > 0.6):
             blocos.append(bloco)
             bloco = []

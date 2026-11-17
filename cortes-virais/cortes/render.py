@@ -7,6 +7,8 @@ from pathlib import Path
 
 from . import edicao, enquadramento, sinais, transcricao
 
+ENTRADA_NARRACAO = 0.15  # segundos até a voz começar
+
 TAMANHOS = {"auto": (1080, 1920), "vertical_blur": (1080, 1920), "vertical_crop": (1080, 1920),
             "original": (1920, 1080)}
 
@@ -31,8 +33,13 @@ def renderizar(video: str | Path, inicio: float, fim: float, saida: Path, *, for
                palavras: list | None = None, credito: str = "", gancho: str = "",
                marca: str = "", palavras_chave: list[str] | None = None,
                momento: float | None = None, abrir_com_pico: bool = False,
+               narracao: dict | None = None,
                cfg_cortes: dict | None = None, cfg_edicao: dict | None = None) -> dict:
-    """Gera o MP4 final (H.264/AAC, 30 fps). Devolve {"arquivo", "layout", "duracao", "planos"}."""
+    """Gera o MP4 final (H.264/AAC, 30 fps). Devolve {"arquivo", "layout", "duracao", "planos"}.
+
+    `narracao` = {"arquivo", "duracao", "texto", "volume", "fundo"}: voz de abertura,
+    misturada por cima do áudio original abaixado.
+    """
     cfg_cortes, cfg_edicao = cfg_cortes or {}, cfg_edicao or {}
     largura, altura = TAMANHOS.get(formato, TAMANHOS["auto"])
     saida = Path(saida).resolve()
@@ -82,7 +89,9 @@ def renderizar(video: str | Path, inicio: float, fim: float, saida: Path, *, for
             remapeadas or [], 0, duracao, largura, altura, credito=credito, gancho=gancho,
             marca=marca, posicao=POSICOES[tipo], karaoke=cfg_cortes.get("karaoke", True),
             cor_destaque=cfg_cortes.get("cor_destaque", "#FFE000"),
-            palavras_chave=palavras_chave), encoding="utf-8")
+            palavras_chave=palavras_chave,
+            narracao=(narracao["texto"], ENTRADA_NARRACAO, narracao["duracao"]) if narracao else None,
+        ), encoding="utf-8")
         etapas.append(f"ass={legendas.name}")  # nome relativo + cwd evita escapes no filtro
     etapas.append("format=yuv420p")
     fc = video_fc
@@ -93,15 +102,30 @@ def renderizar(video: str | Path, inicio: float, fim: float, saida: Path, *, for
                f";[vb]{','.join(etapas)}[v]")
     else:
         fc += f";[vc]{','.join(etapas)}[v]"
+    ultimo = max(p["b"] for p in plano["pedacos"])
     mapas = ["-map", "[v]"]
-    if tem_audio:
+    entradas = ["-ss", f"{inicio:.3f}", "-t", f"{ultimo - inicio + 2:.3f}",
+                "-i", str(Path(video).resolve())]
+    if narracao:
+        entradas += ["-i", str(Path(narracao["arquivo"]).resolve())]
+        atraso = int(ENTRADA_NARRACAO * 1000)
+        voz = (f"[1:a]aresample=48000,volume={narracao.get('volume', 1.0):.2f},"
+               f"adelay={atraso}:all=1")
+        if tem_audio:  # abaixa o original só enquanto a narração fala
+            fim_n = ENTRADA_NARRACAO + narracao["duracao"]
+            fc += (f";[ac]aresample=48000,volume='if(between(t,0,{fim_n + 0.1:.2f}),"
+                   f"{narracao.get('fundo', 0.25):.2f},1)':eval=frame[fundo];{voz}[voz];"
+                   f"[fundo][voz]amix=inputs=2:duration=first:normalize=0[ac2]")
+            fc += ";[ac2]loudnorm=I=-14:TP=-1.5:LRA=11[a]"
+        else:
+            fc += f";{voz},apad[a]"
+        mapas += ["-map", "[a]"]
+    elif tem_audio:
         fc += ";[ac]loudnorm=I=-14:TP=-1.5:LRA=11[a]"
         mapas += ["-map", "[a]"]
 
-    ultimo = max(p["b"] for p in plano["pedacos"])
     subprocess.run(
-        ["ffmpeg", "-v", "error", "-y", "-ss", f"{inicio:.3f}", "-t", f"{ultimo - inicio + 2:.3f}",
-         "-i", str(Path(video).resolve()), "-filter_complex", fc, *mapas, "-t", f"{duracao:.3f}",
+        ["ffmpeg", "-v", "error", "-y", *entradas, "-filter_complex", fc, *mapas, "-t", f"{duracao:.3f}",
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
          "-ar", "48000", "-movflags", "+faststart", str(saida)],
         check=True, cwd=saida.parent,

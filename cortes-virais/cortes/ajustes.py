@@ -66,6 +66,22 @@ SECOES = [
         ("edicao.barra_progresso", "booleano", "Barra de progresso",
          "Linha fina no rodapé que avança com o vídeo; ajuda a pessoa a ficar até o fim.", {}),
     ]),
+    ("Narração do canal", "Uma frase de abertura dita por uma voz sintética, escrita pela IA: "
+     "contexto e um olhar próprio sobre o trecho. A voz roda no seu computador, sem custo.", [
+        ("narracao.ativa", "booleano", "Narrar a abertura dos cortes",
+         "Precisa da voz instalada (veja “Recursos opcionais” no topo desta página). Sem "
+         "ela, os cortes saem normalmente, sem narração.", {}),
+        ("narracao.voz", "texto", "Arquivo da voz",
+         "Caminho do arquivo .onnx baixado. O padrão é uma voz masculina em português do Brasil.",
+         {}),
+        ("narracao.velocidade", "numero", "Velocidade da fala",
+         "1 é o ritmo natural. Um pouco acima disso combina com vídeos curtos.",
+         {"min": 0.7, "max": 1.6}),
+        ("narracao.volume", "numero", "Volume da narração", "", {"min": 0.3, "max": 2}),
+        ("narracao.fundo", "numero", "Volume do vídeo durante a narração",
+         "0 silencia o original enquanto o narrador fala; 1 mantém no volume normal.",
+         {"min": 0, "max": 1}),
+    ]),
     ("Inteligência artificial", "Qual modelo faz cada parte e o quanto ele é exigente.", [
         ("ia.ativa", "booleano", "Usar IA",
          "Desligada, os cortes são escolhidos só por chat e áudio, com títulos genéricos.", {}),
