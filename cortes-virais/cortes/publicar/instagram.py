@@ -24,7 +24,8 @@ def _checar(r: requests.Response) -> dict:
     return dados
 
 
-def enviar(arquivo: str | Path, legenda: str, cfg_ig: dict) -> str:
+def enviar(arquivo: str | Path, legenda: str, cfg_ig: dict) -> tuple[str, str]:
+    """Publica o Reel e devolve (id, link)."""
     usuario, token = os.environ.get("IG_USER_ID"), os.environ.get("IG_ACCESS_TOKEN")
     if not usuario or not token:
         raise RuntimeError("Defina IG_USER_ID e IG_ACCESS_TOKEN no .env.")
@@ -57,4 +58,9 @@ def enviar(arquivo: str | Path, legenda: str, cfg_ig: dict) -> str:
         raise RuntimeError("Instagram não terminou de processar o vídeo em 5 minutos.")
     publicado = _checar(requests.post(f"{grafo}/{usuario}/media_publish", timeout=60, data={
         "creation_id": cid, "access_token": token}))
-    return publicado["id"]
+    try:
+        link = _checar(requests.get(f"{grafo}/{publicado['id']}", timeout=30, params={
+            "fields": "permalink", "access_token": token})).get("permalink", "")
+    except Exception:  # noqa: BLE001 — o post já saiu; o link é só conveniência
+        link = ""
+    return publicado["id"], link

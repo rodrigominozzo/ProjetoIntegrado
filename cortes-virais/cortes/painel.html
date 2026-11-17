@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cortes Virais</title>
+<style>
+:root {
+  --fundo: #0d0f13; --painel: #161920; --painel2: #1d212a; --borda: #2a2f3a;
+  --texto: #eceef2; --suave: #9aa1af; --fraco: #6b7280;
+  --marca: #ff5a3c; --ok: #35c27a; --alerta: #f0b03a; --erro: #f0564f; --info: #5b9dff;
+  --raio: 12px;
+}
+@media (prefers-color-scheme: light) {
+  :root { --fundo: #f4f5f7; --painel: #ffffff; --painel2: #f0f1f4; --borda: #dcdfe6;
+          --texto: #171a20; --suave: #555d6b; --fraco: #8a909c; }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--fundo); color: var(--texto);
+       font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button, input { font: inherit; color: inherit; }
+a { color: var(--info); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.pagina { max-width: 1180px; margin: 0 auto; padding: 20px 16px 60px; }
+
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.logo { font-size: 20px; font-weight: 750; letter-spacing: -.02em; }
+.logo span { color: var(--marca); }
+.espaco { flex: 1; }
+.selo { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px;
+        font-size: 12.5px; font-weight: 600; background: var(--painel2); color: var(--suave);
+        white-space: nowrap; }
+.selo.ok { color: var(--ok); } .selo.alerta { color: var(--alerta); }
+.selo.erro { color: var(--erro); } .selo.info { color: var(--info); }
+.selo.teste { background: color-mix(in srgb, var(--alerta) 18%, transparent); color: var(--alerta); }
+
+.envio { background: var(--painel); border: 1px solid var(--borda); border-radius: var(--raio);
+         padding: 14px; margin-bottom: 18px; }
+.envio form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.envio input[type=text] { flex: 1 1 320px; min-width: 0; padding: 11px 14px; border-radius: 9px;
+         border: 1px solid var(--borda); background: var(--fundo); outline: none; }
+.envio input[type=text]:focus { border-color: var(--marca); }
+.envio p { margin: 9px 2px 0; color: var(--suave); font-size: 13px; }
+.chave { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
+         font-weight: 600; font-size: 14px; }
+.chave input { appearance: none; width: 38px; height: 22px; border-radius: 99px; margin: 0;
+         background: var(--borda); position: relative; cursor: pointer; transition: background .15s; }
+.chave input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+         border-radius: 50%; background: #fff; transition: transform .15s; }
+.chave input:checked { background: var(--alerta); }
+.chave.verde input:checked { background: var(--ok); }
+.chave input:checked::after { transform: translateX(16px); }
+.btn { padding: 10px 18px; border-radius: 9px; border: 1px solid var(--borda); background: var(--painel2);
+       cursor: pointer; font-weight: 600; white-space: nowrap; }
+.btn:hover { border-color: var(--suave); }
+.btn.principal { background: var(--marca); border-color: var(--marca); color: #fff; }
+.btn.principal:hover { filter: brightness(1.08); }
+.btn.mini { padding: 5px 11px; font-size: 13px; border-radius: 7px; }
+.btn.perigo:hover { border-color: var(--erro); color: var(--erro); }
+
+nav { display: flex; gap: 4px; border-bottom: 1px solid var(--borda); margin-bottom: 18px;
+      overflow-x: auto; }
+nav button { background: none; border: 0; padding: 11px 15px; cursor: pointer; color: var(--suave);
+      font-weight: 600; border-bottom: 2px solid transparent; white-space: nowrap; }
+nav button:hover { color: var(--texto); }
+nav button.ativa { color: var(--texto); border-bottom-color: var(--marca); }
+nav .conta { margin-left: 6px; font-size: 12px; padding: 1px 7px; border-radius: 99px;
+      background: var(--painel2); color: var(--suave); }
+nav .conta.viva { background: var(--marca); color: #fff; }
+
+.aba { display: none; } .aba.ativa { display: block; }
+.grade { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+.cartao { background: var(--painel); border: 1px solid var(--borda); border-radius: var(--raio);
+          padding: 16px; min-width: 0; }
+.cartao h3 { margin: 0; font-size: 16px; line-height: 1.3; overflow-wrap: anywhere; }
+.linha { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sub { color: var(--suave); font-size: 13px; }
+.vazio { text-align: center; color: var(--suave); padding: 48px 20px; border: 1px dashed var(--borda);
+         border-radius: var(--raio); }
+.vazio b { display: block; color: var(--texto); font-size: 16px; margin-bottom: 4px; }
+
+.pulso { width: 9px; height: 9px; border-radius: 50%; background: var(--marca); flex: none;
+         animation: pulso 1.4s infinite; }
+.pulso.parado { background: var(--fraco); animation: none; }
+@keyframes pulso { 50% { opacity: .35; } }
+.medidas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 14px 0 10px; }
+.medida { background: var(--painel2); border-radius: 9px; padding: 8px 10px; }
+.medida b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+.medida span { font-size: 11.5px; color: var(--suave); }
+svg.grafico { display: block; width: 100%; height: 56px; background: var(--painel2); border-radius: 9px; }
+.picos { list-style: none; padding: 0; margin: 10px 0 0; font-size: 13px; }
+.picos li { padding: 5px 0; border-top: 1px solid var(--borda); display: flex; gap: 8px; }
+.picos time { color: var(--suave); font-variant-numeric: tabular-nums; flex: none; }
+
+.barra { height: 7px; border-radius: 99px; background: var(--painel2); overflow: hidden; margin: 12px 0 6px; }
+.barra i { display: block; height: 100%; background: var(--marca); border-radius: 99px; transition: width .4s; }
+.barra.livre i { width: 35%; animation: vai 1.3s infinite ease-in-out; }
+@keyframes vai { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+.msg-erro { color: var(--erro); font-size: 13px; margin-top: 8px; overflow-wrap: anywhere; }
+
+.analise { margin-top: 14px; border-top: 1px solid var(--borda); padding-top: 12px; }
+svg.linha-tempo { display: block; width: 100%; height: 120px; background: var(--painel2); border-radius: 9px; }
+.eixo { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--fraco); margin-top: 3px; }
+.legenda { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--suave); margin: 8px 0; }
+.legenda i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; }
+.rolagem { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; color: var(--suave); font-weight: 600; font-size: 12px; padding: 6px 8px; white-space: nowrap; }
+td { padding: 8px; border-top: 1px solid var(--borda); vertical-align: top; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.grupo { margin-bottom: 22px; }
+.grupo > .linha { margin-bottom: 10px; }
+.grupo h2 { font-size: 17px; margin: 0; overflow-wrap: anywhere; }
+.cortes { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.corte { background: var(--painel); border: 1px solid var(--borda); border-radius: var(--raio);
+         overflow: hidden; display: flex; flex-direction: column; }
+.corte video { width: 100%; aspect-ratio: 9/16; background: #000; display: block; }
+.corte .sem-arquivo { aspect-ratio: 9/16; display: grid; place-items: center; background: var(--painel2);
+         color: var(--fraco); font-size: 13px; }
+.corte .corpo { padding: 12px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.corte h4 { margin: 0; font-size: 14.5px; line-height: 1.3; overflow-wrap: anywhere; }
+.nota { font-weight: 750; font-variant-numeric: tabular-nums; }
+.acoes { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
+
+.contas { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-bottom: 16px; }
+.contas .cartao b.grande { font-size: 24px; font-variant-numeric: tabular-nums; }
+.celula { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; min-width: 150px; }
+
+#avisos { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 9; }
+.aviso { background: var(--painel); border: 1px solid var(--borda); border-left: 4px solid var(--ok);
+         padding: 10px 14px; border-radius: 9px; max-width: 360px; box-shadow: 0 6px 24px #0005; font-size: 14px; }
+.aviso.erro { border-left-color: var(--erro); }
+@media (max-width: 520px) { .grade { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="pagina">
+  <header>
+    <div class="logo">Cortes <span>Virais</span></div>
+    <div class="espaco"></div>
+    <div id="selos" class="linha"></div>
+  </header>
+
+  <section class="envio">
+    <form id="form-envio">
+      <input type="text" id="alvo" placeholder="Cole o link de um vídeo ou de uma live do YouTube" autocomplete="off">
+      <label class="chave" title="Gera os cortes sem publicar nada"><input type="checkbox" id="teste"> Modo teste</label>
+      <label class="chave" id="rotulo-live" hidden title="Reproduz o arquivo em tempo real, como se fosse uma live"><input type="checkbox" id="como-live"> Simular live</label>
+      <button class="btn principal" type="submit">Enviar</button>
+    </form>
+    <p id="dica-envio"></p>
+  </section>
+
+  <nav id="abas">
+    <button data-aba="lives">Lives <span class="conta" id="n-lives">0</span></button>
+    <button data-aba="analises">Análises <span class="conta" id="n-analises">0</span></button>
+    <button data-aba="cortes">Cortes <span class="conta" id="n-cortes">0</span></button>
+    <button data-aba="publicacoes">Publicações <span class="conta" id="n-fila">0</span></button>
+    <button data-aba="canais">Canais <span class="conta" id="n-canais">0</span></button>
+  </nav>
+
+  <section class="aba" id="aba-lives"><div class="grade" id="lista-lives"></div></section>
+  <section class="aba" id="aba-analises"><div id="lista-analises" style="display:grid;gap:14px"></div></section>
+  <section class="aba" id="aba-cortes"><div id="lista-cortes"></div></section>
+  <section class="aba" id="aba-publicacoes">
+    <div class="contas" id="contas"></div>
+    <div class="cartao"><div class="rolagem"><table>
+      <thead><tr><th>Corte</th><th>Nota</th><th>YouTube</th><th>Instagram</th></tr></thead>
+      <tbody id="fila"></tbody>
+    </table></div><div id="fila-vazia"></div></div>
+  </section>
+  <section class="aba" id="aba-canais"><div id="lista-canais"></div></section>
+</div>
+<div id="avisos"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const e = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let estado = null;
+const analises = {};        // video_id -> dados | "carregando" | "erro"
+const abertas = new Set();  // análises expandidas
+
+// ---------- utilidades ----------
+function tempo(s) {
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(r).padStart(2, "0");
+}
+function ha(quando) {
+  const s = Date.now() / 1000 - quando;
+  if (s < 60) return "agora";
+  if (s < 3600) return "há " + Math.floor(s / 60) + " min";
+  if (s < 86400) return "há " + Math.floor(s / 3600) + " h";
+  return "há " + Math.floor(s / 86400) + " d";
+}
+const hora = t => new Date(t * 1000).toLocaleTimeString("pt-BR", {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+
+function avisar(texto, erro) {
+  const d = document.createElement("div");
+  d.className = "aviso" + (erro ? " erro" : "");
+  d.textContent = texto;
+  $("#avisos").append(d);
+  setTimeout(() => d.remove(), erro ? 7000 : 3500);
+}
+async function acao(nome, dados, ok) {
+  try {
+    const r = await fetch("/api/" + nome, {method: "POST", body: JSON.stringify(dados || {}),
+      headers: {"Content-Type": "application/json", "X-Painel": "1"}});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.erro || "Não foi possível concluir.");
+    if (ok) avisar(ok);
+    atualizar();
+    return true;
+  } catch (err) { avisar(err.message, true); return false; }
+}
+// Atualiza só os cartões que mudaram, para não reiniciar vídeos nem fechar painéis.
+function sincronizar(caixa, itens, chave, html, classe) {
+  const atuais = new Map([...caixa.children].map(el => [el.dataset.chave, el]));
+  let anterior = null;
+  for (const item of itens) {
+    const k = String(chave(item));
+    let el = atuais.get(k);
+    if (!el) { el = document.createElement(caixa.tagName === "TBODY" ? "tr" : "div"); el.dataset.chave = k; if (classe) el.className = classe; }
+    atuais.delete(k);
+    const novo = html(item);
+    const tocando = [...el.querySelectorAll("video")].some(v => !v.paused);
+    if (el._html !== novo && !tocando) { el.innerHTML = novo; el._html = novo; }
+    const esperado = anterior ? anterior.nextSibling : caixa.firstChild;
+    if (el !== esperado) caixa.insertBefore(el, esperado);
+    anterior = el;
+  }
+  for (const el of atuais.values()) el.remove();
+}
+const vazio = (titulo, texto) => `<div class="vazio"><b>${e(titulo)}</b>${e(texto)}</div>`;
+
+// ---------- lives ----------
+function grafico(l) {
+  const v = l.historico, L = 300, A = 56, topo = Math.max(l.limiar * 1.6, ...v, 1);
+  const y = n => (A - 4 - n / topo * (A - 8)).toFixed(1);
+  const pts = v.map((n, i) => `${(i / 149 * L).toFixed(1)},${y(n)}`).join(" ");
+  return `<svg class="grafico" viewBox="0 0 ${L} ${A}" preserveAspectRatio="none" role="img" aria-label="Empolgação nos últimos 5 minutos">
+    <line x1="0" x2="${L}" y1="${y(l.limiar)}" y2="${y(l.limiar)}" stroke="var(--alerta)" stroke-width="1" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>
+    <polyline points="${pts}" fill="none" stroke="var(--marca)" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
+}
+function cartaoLive(l) {
+  const viva = l.status === "acompanhando" || l.status === "conectando";
+  const rotulo = {conectando: "Conectando…", acompanhando: "Ao vivo", encerrada: "Encerrada", erro: "Erro"}[l.status];
+  return `<div class="linha"><span class="pulso ${viva ? "" : "parado"}"></span>
+      <span class="selo ${l.status === "erro" ? "erro" : ""}">${rotulo}</span>
+      ${l.teste ? '<span class="selo teste">Teste</span>' : ""}
+      <span class="espaco"></span>
+      ${viva ? `<button class="btn mini perigo" data-acao="live/parar" data-id="${e(l.id)}">Parar</button>`
+             : `<button class="btn mini" data-acao="live/fechar" data-id="${e(l.id)}">Fechar</button>`}</div>
+    <h3 style="margin-top:10px">${e(l.titulo)}</h3>
+    <div class="sub">${e(l.canal)}${l.url ? ` · <a href="${e(l.url)}" target="_blank" rel="noopener">abrir live</a>` : ""}</div>
+    <div class="medidas">
+      <div class="medida"><b>${tempo((l.fim || Date.now() / 1000) - l.inicio)}</b><span>${l.fim ? "de acompanhamento" : "acompanhando"}</span></div>
+      <div class="medida"><b>${l.chat_ativo ? l.mensagens_min : "—"}</b><span>${l.chat_ativo ? "mensagens/min" : "chat indisponível"}</span></div>
+      <div class="medida"><b style="color:${l.nivel >= l.limiar ? "var(--marca)" : "inherit"}">${l.nivel.toFixed(1)}</b><span>empolgação (corta em ${l.limiar})</span></div>
+      <div class="medida"><b>${l.cortes}</b><span>cortes gerados</span></div>
+    </div>
+    ${grafico(l)}
+    ${l.erro ? `<div class="msg-erro">${e(l.erro)}</div>` : ""}
+    ${l.picos.length ? `<ul class="picos">${l.picos.slice().reverse().map(p =>
+        `<li><time>${hora(p.hora)}</time><span><b>Pico ${p.nota}</b> — ${e(p.resultado)}</span></li>`).join("")}</ul>`
+      : `<div class="sub" style="margin-top:10px">Nenhum pico ainda. O primeiro minuto serve para medir o ritmo normal da live.</div>`}`;
+}
+
+// ---------- análises ----------
+function painelAnalise(id) {
+  const a = analises[id];
+  if (a === "carregando") return `<div class="analise sub">Carregando análise…</div>`;
+  if (!a || a === "erro") return `<div class="analise sub">A análise deste vídeo não está disponível.</div>`;
+  const L = 1000, A = 120, topo = Math.max(...a.pontos, 1), d = a.duracao || a.pontos.length;
+  const cor = c => c.escolhido ? "var(--ok)" : c.aprovado ? "var(--alerta)" : "var(--erro)";
+  const faixas = a.candidatos.map(c => `<rect x="${(c.inicio / d * L).toFixed(1)}" width="${Math.max(3, (c.fim - c.inicio) / d * L).toFixed(1)}" y="0" height="${A}" fill="${cor(c)}" opacity=".28"><title>${e(tempo(c.inicio))} – nota ${Math.round(c.nota)}</title></rect>`).join("");
+  const pts = a.pontos.map((n, i) => `${(i / Math.max(1, a.pontos.length - 1) * L).toFixed(1)},${(A - 4 - n / topo * (A - 10)).toFixed(1)}`).join(" ");
+  const linhas = a.candidatos.slice().sort((x, y) => y.nota - x.nota).map(c => `<tr>
+      <td class="num">${tempo(c.inicio)} – ${tempo(c.fim)}</td>
+      <td class="num"><b>${Math.round(c.nota)}</b></td>
+      <td><span class="selo ${c.escolhido ? "ok" : c.aprovado ? "alerta" : "erro"}">${c.escolhido ? "Cortado" : c.aprovado ? "Ficou de fora" : "Reprovado"}</span></td>
+      <td><b>${e(c.titulo)}</b><div class="sub">${e(c.motivo)}</div></td></tr>`).join("");
+  return `<div class="analise">
+    <svg class="linha-tempo" viewBox="0 0 ${L} ${A}" preserveAspectRatio="none" role="img" aria-label="Pontuação ao longo do vídeo">${faixas}
+      <polyline points="${pts}" fill="none" stroke="var(--texto)" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>
+    <div class="eixo"><span>0:00</span><span>${tempo(d / 2)}</span><span>${tempo(d)}</span></div>
+    <div class="legenda"><span><i style="background:var(--ok)"></i>Cortado</span><span><i style="background:var(--alerta)"></i>Aprovado, mas ficou de fora</span><span><i style="background:var(--erro)"></i>Reprovado</span>
+      <span>Sinais: ${e(Object.keys(a.sinais).join(", "))}${a.com_ia ? " + IA" : " (sem IA)"}</span></div>
+    <div class="rolagem"><table><thead><tr><th>Trecho</th><th>Nota</th><th>Resultado</th><th>Título e motivo</th></tr></thead><tbody>${linhas}</tbody></table></div>
+  </div>`;
+}
+const botaoAnalise = id => `<button class="btn mini" data-analise="${e(id)}">${abertas.has(id) ? "Ocultar análise" : "Ver análise"}</button>`;
+
+function cartaoTarefa(t) {
+  const rodando = ["identificando", "fila", "rodando"].includes(t.status);
+  const selo = {identificando: ["Identificando", "info"], fila: ["Na fila", ""], rodando: ["Analisando", "info"],
+                feito: ["Concluído", "ok"], erro: ["Erro", "erro"]}[t.status];
+  let meio = "";
+  if (rodando) {
+    const pct = t.fracao == null ? null : Math.round(t.fracao * 100);
+    meio = `<div class="barra ${pct == null ? "livre" : ""}"><i style="${pct == null ? "" : `width:${pct}%`}"></i></div>
+      <div class="sub">${e(t.etapa)}${pct == null ? "" : ` · ${pct}%`} · ${tempo(Date.now() / 1000 - t.inicio)}</div>`;
+  } else if (t.status === "feito") {
+    meio = `<div class="sub" style="margin-top:8px">${t.cortes ? `${t.cortes} ${t.cortes === 1 ? "corte gerado" : "cortes gerados"}` : "Nenhum trecho atingiu a nota mínima"} em ${tempo(t.fim - t.inicio)}${t.teste ? " · nada foi publicado" : ""}.</div>`;
+  } else {
+    meio = `<div class="msg-erro">${e(t.erro)}</div>`;
+  }
+  return `<div class="linha"><span class="selo ${selo[1]}">${selo[0]}</span>
+      ${t.teste ? '<span class="selo teste">Teste</span>' : ""}
+      ${t.origem !== "manual" ? `<span class="selo">${e(t.origem)}</span>` : ""}
+      <span class="espaco"></span>
+      ${t.status === "feito" ? botaoAnalise(t.video_id) : ""}
+      ${t.status === "feito" && t.cortes ? `<button class="btn mini" data-ir="cortes">Ver cortes</button>` : ""}
+      ${rodando ? "" : `<button class="btn mini" data-acao="tarefa/fechar" data-id="${e(t.id)}">Fechar</button>`}</div>
+    <h3 style="margin-top:10px">${e(t.titulo)}</h3>
+    <div class="sub">${e(t.canal)}</div>${meio}
+    ${t.status === "feito" && abertas.has(t.video_id) ? painelAnalise(t.video_id) : ""}`;
+}
+
+// ---------- cortes ----------
+function seloPlataforma(nome, p) {
+  const tipo = {publicado: "ok", "na fila": "info", falhou: "erro", teste: ""}[p.situacao];
+  const texto = p.situacao === "teste" ? "não enviado" : p.situacao;
+  return `<span class="selo ${tipo}" title="${e(p.erro)}">${nome}: ${texto}</span>`;
+}
+function cartaoCorte(c) {
+  return `${c.existe ? `<video src="/midia/${c.id}" controls preload="metadata" playsinline></video>`
+                     : `<div class="sem-arquivo">Arquivo removido</div>`}
+    <div class="corpo">
+      <div class="linha"><span class="nota">${Math.round(c.nota)}</span><span class="sub">nota · ${tempo(c.inicio)}–${tempo(c.fim)} · ${ha(c.criado)}</span></div>
+      <h4>${e(c.titulo)}</h4>
+      <div class="sub">${e(c.descricao.split("\n")[0])}</div>
+      <div class="linha">${c.teste ? '<span class="selo teste">Teste</span>' : seloPlataforma("YouTube", c.yt) + seloPlataforma("Instagram", c.ig)}</div>
+      <div class="acoes">
+        ${c.teste ? `<button class="btn mini principal" data-acao="corte/aprovar" data-id="${c.id}" data-ok="Corte enviado para a fila de publicação.">Aprovar e publicar</button>` : ""}
+        ${c.yt.situacao !== "publicado" && c.ig.situacao !== "publicado" ? `<button class="btn mini perigo" data-acao="corte/remover" data-id="${c.id}" data-confirmar="Remover este corte?">Remover</button>` : ""}
+      </div>
+    </div>`;
+}
+function grupoCortes(g) {
+  return `<div class="linha"><h2>${e(g.titulo)}</h2>
+      <span class="selo">${g.origem === "live" ? "Live" : "Vídeo"}</span>
+      <span class="sub">${e(g.canal)}${g.canal ? " · " : ""}${g.cortes.length} ${g.cortes.length === 1 ? "corte" : "cortes"}</span>
+      <span class="espaco"></span>${g.origem === "live" ? "" : botaoAnalise(g.video_id)}</div>
+    ${abertas.has(g.video_id) ? painelAnalise(g.video_id) + '<div style="height:12px"></div>' : ""}
+    <div class="cortes">${g.cortes.map(c => `<div class="corte">${cartaoCorte(c)}</div>`).join("")}</div>`;
+}
+
+// ---------- publicações ----------
+function cartaoConta(p, nome, c) {
+  const situacao = !c.ativo ? ["Desligado na configuração", "alerta"] : c.conectado ? ["Conectado", "ok"] : ["Não conectado", "erro"];
+  const ajuda = p === "yt" ? "Rode python -m cortes login-youtube para autorizar o canal."
+                           : "Preencha IG_USER_ID e IG_ACCESS_TOKEN no arquivo .env e reinicie o painel.";
+  return `<div class="cartao"><div class="linha"><h3>${nome}</h3><span class="espaco"></span><span class="selo ${situacao[1]}">${situacao[0]}</span></div>
+    <div style="margin-top:10px"><b class="grande">${c.hoje}</b> <span class="sub">de ${c.max} publicações nas últimas 24 h</span></div>
+    ${c.ativo && !c.conectado ? `<div class="sub" style="margin-top:6px">${ajuda}</div>` : ""}</div>`;
+}
+function celula(c, p, conta) {
+  const s = c[p];
+  if (s.situacao === "publicado")
+    return `<div class="celula"><span class="selo ok">Publicado</span><span class="sub">${ha(s.quando)}${s.link ? ` · <a href="${e(s.link)}" target="_blank" rel="noopener">abrir</a>` : ""}</span></div>`;
+  const pode = conta.ativo && conta.conectado && c.existe;
+  const botao = pode ? `<button class="btn mini" data-acao="corte/publicar" data-id="${c.id}" data-plataforma="${p}" data-ok="Publicação iniciada.">${s.situacao === "falhou" ? "Tentar de novo" : "Publicar agora"}</button>` : "";
+  const selo = s.situacao === "falhou" ? '<span class="selo erro">Falhou</span>'
+             : !conta.conectado || !conta.ativo ? '<span class="selo">Aguardando conta</span>' : '<span class="selo info">Na fila</span>';
+  return `<div class="celula">${selo}${s.erro ? `<span class="msg-erro" style="margin:0">${e(s.erro)}</span>` : ""}${botao}</div>`;
+}
+const linhaFila = c => `<td><b>${e(c.titulo)}</b><div class="sub">${e(c.video)}${c.origem === "live" ? " · live" : ""}</div></td>
+  <td class="num"><b>${Math.round(c.nota)}</b></td><td>${celula(c, "yt", estado.contas.yt)}</td><td>${celula(c, "ig", estado.contas.ig)}</td>`;
+
+// ---------- canais ----------
+const linhaCanal = c => `<div class="linha"><div><h3>${e(c.nome || c.id)}</h3>
+    <a class="sub" href="https://www.youtube.com/channel/${e(c.id)}" target="_blank" rel="noopener">abrir canal</a></div><span class="espaco"></span>
+    <label class="chave verde"><input type="checkbox" data-seguir="${e(c.id)}" ${c.seguir ? "checked" : ""}> Acompanhar automaticamente</label>
+    <button class="btn mini perigo" data-acao="canal/remover" data-id="${e(c.id)}" data-confirmar="Remover este canal da lista?">Remover</button></div>`;
+
+// ---------- desenho geral ----------
+function desenhar() {
+  const s = estado;
+  const vivas = s.lives.filter(l => l.status === "acompanhando" || l.status === "conectando").length;
+  const andando = s.tarefas.filter(t => !["feito", "erro"].includes(t.status)).length;
+  const nCortes = s.grupos.reduce((n, g) => n + g.cortes.length, 0);
+  const naFila = s.fila.filter(c => c.yt.situacao === "na fila" || c.ig.situacao === "na fila").length;
+  $("#n-lives").textContent = vivas; $("#n-lives").classList.toggle("viva", vivas > 0);
+  $("#n-analises").textContent = andando; $("#n-analises").classList.toggle("viva", andando > 0);
+  $("#n-cortes").textContent = nCortes; $("#n-fila").textContent = naFila; $("#n-canais").textContent = s.canais.length;
+
+  const selos = `<span class="selo ${s.ia ? "ok" : "alerta"}" title="${s.ia ? "" : "Defina ANTHROPIC_API_KEY no .env"}">IA ${s.ia ? "ligada" : "desligada"}</span>
+    <span class="selo ${s.whisper ? "ok" : ""}" title="${s.whisper ? "" : "Instale faster-whisper para legendar vídeos sem legenda e lives"}">Legendas ${s.whisper ? "automáticas" : "só do YouTube"}</span>
+    <label class="chave verde"><input type="checkbox" id="auto" ${s.publicacao_auto ? "checked" : ""}> Publicação automática</label>`;
+  if ($("#selos")._html !== selos) { $("#selos").innerHTML = selos; $("#selos")._html = selos; }
+
+  const lives = $("#lista-lives");
+  if (!s.lives.length) { lives._vazio || (lives.innerHTML = vazio("Nenhuma live sendo acompanhada", "Cole o link de uma live acima. Você pode acompanhar várias ao mesmo tempo."), lives._vazio = true); }
+  else { if (lives._vazio) { lives.innerHTML = ""; lives._vazio = false; } sincronizar(lives, s.lives, l => l.id, cartaoLive, "cartao"); }
+
+  const an = $("#lista-analises");
+  if (!s.tarefas.length) { an._vazio || (an.innerHTML = vazio("Nenhum vídeo em análise", "Cole o link de um vídeo gravado acima. Com o modo teste ligado, você vê o que seria cortado sem publicar nada."), an._vazio = true); }
+  else { if (an._vazio) { an.innerHTML = ""; an._vazio = false; } sincronizar(an, s.tarefas, t => t.id, cartaoTarefa, "cartao"); }
+
+  const co = $("#lista-cortes");
+  if (!s.grupos.length) { co._vazio || (co.innerHTML = vazio("Nenhum corte ainda", "Os cortes aparecem aqui, agrupados pelo vídeo ou pela live de origem."), co._vazio = true); }
+  else { if (co._vazio) { co.innerHTML = ""; co._vazio = false; } sincronizar(co, s.grupos, g => g.video_id, grupoCortes, "grupo"); }
+
+  const contas = cartaoConta("yt", "YouTube", s.contas.yt) + cartaoConta("ig", "Instagram", s.contas.ig);
+  if ($("#contas")._html !== contas) { $("#contas").innerHTML = contas; $("#contas")._html = contas; }
+  sincronizar($("#fila"), s.fila, c => c.id, linhaFila);
+  $("#fila-vazia").innerHTML = s.fila.length ? `<div class="sub" style="margin-top:10px">${s.publicacao_auto ? `Cortes de live são publicados na hora; os de vídeo gravado, um a cada ${s.intervalo_min} min.` : "Publicação automática pausada: use os botões para publicar um a um."}</div>`
+    : `<div class="sub" style="padding:24px;text-align:center">Nada para publicar. Cortes em modo teste só entram aqui depois de aprovados.</div>`;
+
+  const ca = $("#lista-canais");
+  if (!s.canais.length) { ca._vazio || (ca.innerHTML = vazio("Nenhum canal confiável ainda", "Todo link que você envia marca o canal como confiável. Depois, ligue o acompanhamento para cortar as lives e os vídeos novos dele sozinho."), ca._vazio = true); }
+  else { if (ca._vazio) { ca.innerHTML = ""; ca._vazio = false; } ca.style.cssText = "display:grid;gap:10px"; sincronizar(ca, s.canais, c => c.id, linhaCanal, "cartao"); }
+}
+
+async function atualizar() {
+  try {
+    estado = await (await fetch("/api/estado")).json();
+    desenhar();
+  } catch (err) { /* servidor reiniciando: tenta de novo no próximo ciclo */ }
+}
+
+function abrirAba(nome) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("ativa", b.dataset.aba === nome));
+  document.querySelectorAll(".aba").forEach(a => a.classList.toggle("ativa", a.id === "aba-" + nome));
+  try { localStorage.setItem("aba", nome); } catch (err) {}
+}
+
+// ---------- eventos ----------
+$("#abas").addEventListener("click", ev => { const b = ev.target.closest("button"); if (b) abrirAba(b.dataset.aba); });
+
+function dica() {
+  const local = $("#alvo").value.trim() && !/^https?:\/\//i.test($("#alvo").value.trim());
+  $("#rotulo-live").hidden = !local;
+  $("#dica-envio").textContent = $("#teste").checked
+    ? "Modo teste: os cortes são gerados e ficam na aba Cortes para você avaliar. Nada é publicado até você aprovar."
+    : "O sistema identifica sozinho se é live ou vídeo gravado, corta os melhores momentos e publica. Canais dos links enviados são tratados como confiáveis.";
+}
+$("#alvo").addEventListener("input", dica); $("#teste").addEventListener("change", dica); dica();
+
+$("#form-envio").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const alvo = $("#alvo").value.trim();
+  if (!alvo) return avisar("Cole um link primeiro.", true);
+  const comoLive = !$("#rotulo-live").hidden && $("#como-live").checked;
+  if (await acao("enviar", {alvo, teste: $("#teste").checked, como_live: comoLive}, "Recebido. Identificando o vídeo…")) {
+    $("#alvo").value = ""; dica();
+    abrirAba(comoLive || /\/live\b/.test(alvo) ? "lives" : "analises");
+  }
+});
+
+document.addEventListener("click", async ev => {
+  const b = ev.target.closest("[data-acao],[data-analise],[data-ir]");
+  if (!b) return;
+  if (b.dataset.ir) return abrirAba(b.dataset.ir);
+  if (b.dataset.analise) {
+    const id = b.dataset.analise;
+    if (abertas.has(id)) abertas.delete(id);
+    else {
+      abertas.add(id);
+      if (!analises[id] || analises[id] === "erro") {
+        analises[id] = "carregando";
+        fetch("/api/analise/" + encodeURIComponent(id)).then(r => r.ok ? r.json() : Promise.reject())
+          .then(j => analises[id] = j, () => analises[id] = "erro").then(desenhar);
+      }
+    }
+    return desenhar();
+  }
+  if (b.dataset.confirmar && !confirm(b.dataset.confirmar)) return;
+  const {acao: nome, ok, ...dados} = b.dataset;
+  delete dados.confirmar;
+  acao(nome, dados, ok);
+});
+document.addEventListener("change", ev => {
+  if (ev.target.id === "auto") acao("publicacao_auto", {ligada: ev.target.checked}, ev.target.checked ? "Publicação automática ligada." : "Publicação automática pausada.");
+  if (ev.target.dataset.seguir) acao("canal/seguir", {id: ev.target.dataset.seguir, seguir: ev.target.checked});
+});
+
+let inicial = "lives";
+try { inicial = localStorage.getItem("aba") || inicial; } catch (err) {}
+abrirAba(inicial);
+atualizar();
+setInterval(atualizar, 2000);
+</script>
+</body>
+</html>

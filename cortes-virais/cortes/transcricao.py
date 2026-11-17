@@ -5,11 +5,13 @@ import json
 import logging
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 Palavra = tuple[float, float, str]  # início, fim, texto
 _whisper = None
+_trava_whisper = threading.Lock()  # um modelo só, usado por várias análises e lives
 
 
 def ler_json3(caminho: str | Path) -> list[Palavra]:
@@ -57,9 +59,9 @@ def transcrever(video: str | Path, inicio: float, duracao: float, idioma: str,
         return []
     from faster_whisper import WhisperModel
 
-    if _whisper is None:
-        _whisper = WhisperModel(modelo, device="auto", compute_type="int8")
-    with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
+    with _trava_whisper, tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
+        if _whisper is None:
+            _whisper = WhisperModel(modelo, device="auto", compute_type="int8")
         subprocess.run(
             ["ffmpeg", "-v", "error", "-y", "-ss", f"{inicio:.2f}", "-t", f"{duracao:.2f}",
              "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", tmp.name], check=True)

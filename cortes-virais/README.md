@@ -47,7 +47,31 @@ cp .env.exemplo .env                          # preencha as chaves
 - **Instagram:** conta profissional + app na Meta com `instagram_content_publish`.
   Coloque `IG_USER_ID` e um token de longa duração em `IG_ACCESS_TOKEN`.
 
-## Uso
+## Painel
+
+```bash
+python -m cortes painel        # abre em http://localhost:8000
+```
+
+Cole o link de um vídeo ou de uma live no topo; o sistema identifica o tipo sozinho.
+
+| Aba | O que mostra |
+|---|---|
+| **Lives** | Cada live acompanhada (várias ao mesmo tempo): tempo, mensagens por minuto, gráfico da empolgação contra o limiar de corte e os picos detectados. |
+| **Análises** | Vídeos gravados em processamento, com etapa e progresso. Ao terminar, "Ver análise" mostra a linha do tempo com todos os trechos considerados, a nota e o motivo de cada um. |
+| **Cortes** | Os cortes prontos, agrupados pelo vídeo ou live de origem, com player. |
+| **Publicações** | Situação das contas, limite diário e a fila: o que saiu, o que falhou (com o erro) e botões para publicar ou tentar de novo. |
+| **Canais** | Canais dos links que você enviou, tratados como confiáveis. Ligue "Acompanhar automaticamente" para cortar as lives e vídeos novos deles sem enviar link. |
+
+**Modo teste:** com a chave ligada, o vídeo ou a live é processado normalmente, mas os
+cortes ficam só na aba Cortes. Nada é publicado até você clicar em "Aprovar e publicar".
+Para testar sem internet, cole o caminho de um arquivo de vídeo local; "Simular live"
+reproduz o arquivo em tempo real como se fosse uma transmissão.
+
+O painel não tem senha e por padrão só aceita conexões do próprio computador. Lives em
+acompanhamento não são retomadas se o painel for reiniciado; cortes e fila, sim.
+
+## Linha de comando
 
 ```bash
 python -m cortes vod  "https://www.youtube.com/watch?v=..."   # vídeo ou live já encerrada

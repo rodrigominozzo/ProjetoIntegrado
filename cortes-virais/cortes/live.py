@@ -6,6 +6,7 @@ compara o ritmo do chat e o volume com a linha de base; quando há um pico, o tr
 """
 from __future__ import annotations
 
+import collections
 import logging
 import subprocess
 import threading
@@ -42,6 +43,16 @@ class MonitorLive:
         self._trabalhos: list[threading.Thread] = []
         self.cortes: list[int] = []
         self._t0 = time.time()
+        self._parar = threading.Event()
+        # Retrato do andamento, lido pelo painel.
+        self.estado = {
+            "status": "conectando", "inicio": self._t0, "limiar": lv["limiar"], "nivel": 0.0,
+            "historico": collections.deque(maxlen=150), "mensagens_min": 0,
+            "chat_ativo": False, "picos": [], "erro": "",
+        }
+
+    def parar(self) -> None:
+        self._parar.set()
 
     # --- captura ---
     def _iniciar_captura(self) -> subprocess.Popen:
@@ -71,6 +82,7 @@ class MonitorLive:
         usados = [(ini, arq) for (ini, arq), fim in zip(segmentos, fins) if ini < b and fim > a]
         if not usados:
             log.warning("Buffer não cobre mais o pico de %s; corte perdido.", time.ctime(a))
+            pedido["pico"]["resultado"] = "Perdido: o trecho já tinha saído do buffer"
             return
         bruto = self.pasta / f"bruto_{int(a)}.ts"
         lista = self.pasta / f"lista_{int(a)}.txt"
@@ -99,13 +111,17 @@ class MonitorLive:
             avaliado = ia.avaliar([candidato], self.meta, pedido["bruto"], cfg)
             c = avaliado[0] if avaliado else None
             if not c or not c["aprovado"] or c["nota"] < cfg["ia"]["nota_minima"]:
-                log.info("Pico descartado pela avaliação: %s", (c or {}).get("motivo", "sem resposta"))
+                motivo = (c or {}).get("motivo", "sem resposta")
+                log.info("Pico descartado pela avaliação: %s", motivo)
+                pedido["pico"]["resultado"] = f"Descartado: {motivo}"
                 return
             self.cortes.append(vod.finalizar(c, pedido["bruto"], self.meta, cfg, self.banco,
                                              self.pasta, "live", falas, urgente=True))
+            pedido["pico"]["resultado"] = f"Corte gerado: {c['titulo']}"
             publicar.publicar_pendentes(cfg, self.banco)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             log.exception("Falha ao produzir corte da live")
+            pedido["pico"]["resultado"] = f"Erro: {e}"
         finally:
             Path(pedido["bruto"]).unlink(missing_ok=True)
 
@@ -117,10 +133,11 @@ class MonitorLive:
             self.chat.iniciar()
         captura = self._iniciar_captura()
         log.info("Acompanhando live: %s", self.meta["titulo"])
+        self.estado["status"] = "acompanhando"
         ultimo = time.time()
+        recentes: collections.deque[float] = collections.deque()
         try:
-            while True:
-                time.sleep(PASSO)
+            while not self._parar.wait(PASSO):
                 agora = time.time()
                 encerrou = captura.poll() is not None
                 segs = self._segmentos()
@@ -131,12 +148,21 @@ class MonitorLive:
                 ultimo = agora
                 nota = self.detector.alimentar(
                     agora, sum(chat_mod.peso(m) for _, m in novas), self._medir_volume(completos))
+                recentes.extend(t for t, _ in novas)
+                while recentes and recentes[0] < agora - 60:
+                    recentes.popleft()
+                self.estado.update(nivel=round(self.detector.nivel, 2),
+                                   mensagens_min=len(recentes),
+                                   chat_ativo=bool(getattr(self.chat, "ativo", True)))
+                self.estado["historico"].append(round(self.detector.nivel, 2))
                 if nota is not None:
                     momento = agora - self.cfg["sinais"]["atraso_chat"]
                     log.info("Pico detectado (%.1f) às %s", nota, time.strftime("%H:%M:%S"))
+                    pico = {"hora": agora, "nota": round(nota, 1), "resultado": "Recortando…"}
+                    self.estado["picos"].append(pico)
                     self._agendados.append({
                         "a": momento - lv["pre"], "b": momento + lv["pos"], "nota": nota,
-                        "mensagens": self.chat.desde(momento - lv["pre"], agora)})
+                        "pico": pico, "mensagens": self.chat.desde(momento - lv["pre"], agora)})
 
                 # Recorta os picos cujo trecho já está inteiro no buffer.
                 prontos = [p for p in self._agendados if p["b"] <= fim_buffer or encerrou]
@@ -171,6 +197,7 @@ class MonitorLive:
                 p.unlink(missing_ok=True)
             self.banco.marcar_video(self.meta["id"], self.meta["titulo"], self.meta["canal"],
                                     "live_encerrada")
+            self.estado.update(status="encerrada", fim=time.time())
         log.info("Live encerrada: %d cortes gerados.", len(self.cortes))
         return self.cortes
 

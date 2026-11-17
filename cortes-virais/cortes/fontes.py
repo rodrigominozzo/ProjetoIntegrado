@@ -50,7 +50,7 @@ def info(alvo: str) -> dict:
     }
 
 
-def baixar(url: str, pasta: Path, altura_max: int, idioma: str) -> dict:
+def baixar(url: str, pasta: Path, altura_max: int, idioma: str, progresso=None) -> dict:
     """Baixa vídeo, legendas (json3) e replay do chat. Devolve os caminhos encontrados."""
     pasta.mkdir(parents=True, exist_ok=True)
     modelo = str(pasta / "fonte.%(ext)s")
@@ -58,6 +58,7 @@ def baixar(url: str, pasta: Path, altura_max: int, idioma: str) -> dict:
         "format": f"bv*[height<={altura_max}]+ba/b[height<={altura_max}]/b",
         "merge_output_format": "mp4",
         "outtmpl": modelo,
+        "progress_hooks": [_gancho(progresso)] if progresso else [],
     }) as ydl:
         ydl.download([url])
     try:  # legendas e chat são opcionais: nem todo vídeo tem
@@ -76,6 +77,14 @@ def baixar(url: str, pasta: Path, altura_max: int, idioma: str) -> dict:
         "chat": next(pasta.glob("fonte.live_chat.json"), None),
         "legenda": next(iter(sorted(pasta.glob("fonte.*.json3"))), None),
     }
+
+
+def _gancho(progresso):
+    def gancho(d: dict) -> None:
+        total = d.get("total_bytes") or d.get("total_bytes_estimate")
+        if d.get("status") == "downloading" and total:
+            progresso("Baixando o vídeo", d.get("downloaded_bytes", 0) / total)
+    return gancho
 
 
 def url_do_fluxo(url: str, altura: int) -> str:

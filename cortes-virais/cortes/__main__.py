@@ -52,6 +52,10 @@ def main() -> None:
     p.add_argument("--forcar", action="store_true")
     p = sub.add_parser("live", help="acompanha uma live e corta em tempo real")
     p.add_argument("url")
+    p = sub.add_parser("painel", help="abre o painel visual no navegador")
+    p.add_argument("--porta", type=int, default=8000)
+    p.add_argument("--host", default="127.0.0.1",
+                   help="use 0.0.0.0 para acessar de outro aparelho (o painel não tem senha)")
     sub.add_parser("buscar", help="mostra o que a descoberta automática encontra")
     sub.add_parser("auto", help="roda tudo continuamente")
     sub.add_parser("publicar", help="publica os cortes pendentes na fila")
@@ -71,6 +75,9 @@ def main() -> None:
         publicar.publicar_pendentes(cfg, banco)
     elif args.cmd == "live":
         MonitorLive(args.url, cfg, banco).rodar()
+    elif args.cmd == "painel":
+        from . import painel
+        painel.servir(cfg, banco, args.host, args.porta)
     elif args.cmd == "buscar":
         for a in fontes.descobrir(cfg):
             print(f"{'AO VIVO' if a['ao_vivo'] else 'gravado':8} {a['audiencia']:>9}  "

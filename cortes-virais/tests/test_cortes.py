@@ -139,3 +139,50 @@ def test_live_simulada(tmp_path):
          corte["arquivo"]], capture_output=True, text=True).stdout)
     assert abs(dur - 16) < 1.0
     assert not list(monitor.buffer.glob("seg_*.ts"))
+
+
+def test_painel_modo_teste(video, tmp_path):
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    import threading
+
+    from cortes import painel
+
+    cfg = _cfg(tmp_path)
+    cfg["cortes"]["por_video"] = 1
+    banco = Banco(tmp_path / "e.db")
+    ger = painel.Gerenciador(cfg, banco)
+    servidor = ThreadingHTTPServer(("127.0.0.1", 0), painel._manipulador(ger))
+    threading.Thread(target=servidor.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{servidor.server_address[1]}"
+
+    def chamar(rota, dados=None, cabecalhos=None):
+        req = urllib.request.Request(base + rota, data=json.dumps(dados).encode() if dados else None,
+                                     headers=cabecalhos or {})
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
+    painel_ok = {"X-Painel": "1"}
+    assert chamar("/api/enviar", {"alvo": str(video), "teste": True})[0] == 403  # sem cabeçalho
+    assert chamar("/api/enviar", {"alvo": "nada"}, painel_ok)[0] == 400
+    assert chamar("/api/enviar", {"alvo": str(video), "teste": True}, painel_ok)[0] == 200
+    for _ in range(120):
+        estado = json.loads(chamar("/api/estado")[1])
+        if estado["tarefas"] and estado["tarefas"][0]["status"] in {"feito", "erro"}:
+            break
+        time.sleep(1)
+    assert estado["tarefas"][0]["status"] == "feito" and estado["tarefas"][0]["cortes"] == 1
+    corte = estado["grupos"][0]["cortes"][0]
+    assert corte["teste"] and estado["fila"] == [] and banco.pendentes("yt") == []
+
+    analise = json.loads(chamar("/api/analise/local-teste")[1])
+    assert any(c["escolhido"] for c in analise["candidatos"]) and len(analise["pontos"]) == 150
+    codigo, parte = chamar(f"/midia/{corte['id']}", cabecalhos={"Range": "bytes=0-99"})
+    assert codigo == 206 and len(parte) == 100
+
+    assert chamar("/api/corte/aprovar", {"id": corte["id"]}, painel_ok)[0] == 200
+    assert len(banco.pendentes("yt")) == 1
+    servidor.shutdown()

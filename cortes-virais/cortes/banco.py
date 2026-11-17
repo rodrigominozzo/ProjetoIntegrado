@@ -19,7 +19,13 @@ CREATE TABLE IF NOT EXISTS cortes (
     ig_id TEXT, ig_em REAL, ig_tentativas INTEGER DEFAULT 0, ig_erro TEXT,
     criado REAL
 );
+CREATE TABLE IF NOT EXISTS canais (
+    id TEXT PRIMARY KEY, nome TEXT, seguir INTEGER DEFAULT 0, criado REAL
+);
+CREATE TABLE IF NOT EXISTS opcoes (chave TEXT PRIMARY KEY, valor TEXT);
 """
+# Colunas acrescentadas depois da primeira versão.
+MIGRACOES = ["teste INTEGER DEFAULT 0", "yt_link TEXT", "ig_link TEXT"]
 MAX_TENTATIVAS = 3
 
 
@@ -30,6 +36,11 @@ class Banco:
         self._trava = threading.Lock()
         with self._trava:
             self._con.executescript(ESQUEMA)
+            for coluna in MIGRACOES:
+                try:
+                    self._con.execute(f"ALTER TABLE cortes ADD COLUMN {coluna}")
+                except sqlite3.OperationalError:
+                    pass  # já existe
 
     def _exec(self, sql: str, args=()):
         with self._trava:
@@ -54,28 +65,85 @@ class Banco:
 
     # --- cortes ---
     def novo_corte(self, *, video_id, origem, inicio, fim, nota, titulo, descricao,
-                   hashtags, arquivo, urgente=False) -> int:
+                   hashtags, arquivo, urgente=False, teste=False) -> int:
         cur = self._exec(
             "INSERT INTO cortes (video_id, origem, inicio, fim, nota, titulo, descricao, hashtags,"
-            " arquivo, urgente, criado) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            " arquivo, urgente, teste, criado) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (video_id, origem, inicio, fim, nota, titulo, descricao, json.dumps(hashtags),
-             str(arquivo), int(urgente), time.time()),
+             str(arquivo), int(urgente), int(teste), time.time()),
         )
         return cur.lastrowid
 
     def pendentes(self, plataforma: str) -> list[sqlite3.Row]:
         """Cortes ainda não publicados em 'yt' ou 'ig': urgentes e melhores notas primeiro."""
         return self._linhas(
-            f"SELECT * FROM cortes WHERE {plataforma}_id IS NULL AND {plataforma}_tentativas < ?"
+            f"SELECT * FROM cortes WHERE teste=0 AND {plataforma}_id IS NULL"
+            f" AND {plataforma}_tentativas < ?"
             " ORDER BY urgente DESC, nota DESC, id",
             (MAX_TENTATIVAS,),
         )
 
-    def publicado(self, corte_id: int, plataforma: str, id_remoto: str) -> None:
+    def publicado(self, corte_id: int, plataforma: str, id_remoto: str, link: str = "") -> None:
         self._exec(
-            f"UPDATE cortes SET {plataforma}_id=?, {plataforma}_em=?, {plataforma}_erro=NULL WHERE id=?",
-            (id_remoto, time.time(), corte_id),
+            f"UPDATE cortes SET {plataforma}_id=?, {plataforma}_link=?, {plataforma}_em=?,"
+            f" {plataforma}_erro=NULL WHERE id=?",
+            (id_remoto, link, time.time(), corte_id),
         )
+
+    def corte(self, corte_id: int):
+        linhas = self._linhas("SELECT * FROM cortes WHERE id=?", (corte_id,))
+        return linhas[0] if linhas else None
+
+    def todos_cortes(self) -> list[sqlite3.Row]:
+        return self._linhas(
+            "SELECT c.*, v.titulo AS video_titulo, v.canal AS canal FROM cortes c"
+            " LEFT JOIN videos v ON v.id = c.video_id ORDER BY c.criado DESC")
+
+    def aprovar(self, corte_id: int) -> None:
+        """Tira o corte do modo teste: ele entra na fila de publicação."""
+        self._exec("UPDATE cortes SET teste=0 WHERE id=?", (corte_id,))
+
+    def tentar_de_novo(self, corte_id: int, plataforma: str) -> None:
+        self._exec(f"UPDATE cortes SET {plataforma}_tentativas=0, {plataforma}_erro=NULL WHERE id=?",
+                   (corte_id,))
+
+    def remover_corte(self, corte_id: int) -> bool:
+        """Apaga um corte ainda não publicado (registro e arquivo)."""
+        c = self.corte(corte_id)
+        if not c or c["yt_id"] or c["ig_id"]:
+            return False
+        Path(c["arquivo"]).unlink(missing_ok=True)
+        Path(c["arquivo"]).with_suffix(".ass").unlink(missing_ok=True)
+        self._exec("DELETE FROM cortes WHERE id=?", (corte_id,))
+        return True
+
+    def remover_testes(self, video_id: str) -> None:
+        for c in self._linhas("SELECT id FROM cortes WHERE video_id=? AND teste=1", (video_id,)):
+            self.remover_corte(c["id"])
+
+    # --- canais confiáveis e opções ---
+    def canal_confiavel(self, canal_id: str, nome: str) -> None:
+        if canal_id:
+            self._exec("INSERT INTO canais (id, nome, criado) VALUES (?,?,?)"
+                       " ON CONFLICT(id) DO UPDATE SET nome=excluded.nome",
+                       (canal_id, nome, time.time()))
+
+    def canais(self) -> list[sqlite3.Row]:
+        return self._linhas("SELECT * FROM canais ORDER BY nome")
+
+    def seguir_canal(self, canal_id: str, seguir: bool) -> None:
+        self._exec("UPDATE canais SET seguir=? WHERE id=?", (int(seguir), canal_id))
+
+    def remover_canal(self, canal_id: str) -> None:
+        self._exec("DELETE FROM canais WHERE id=?", (canal_id,))
+
+    def opcao(self, chave: str, padrao: str = "") -> str:
+        linhas = self._linhas("SELECT valor FROM opcoes WHERE chave=?", (chave,))
+        return linhas[0]["valor"] if linhas else padrao
+
+    def definir_opcao(self, chave: str, valor: str) -> None:
+        self._exec("INSERT INTO opcoes VALUES (?,?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor",
+                   (chave, valor))
 
     def falhou(self, corte_id: int, plataforma: str, erro: str) -> None:
         self._exec(

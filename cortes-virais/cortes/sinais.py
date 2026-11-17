@@ -139,6 +139,7 @@ class DetectorPico:
         self._hist: collections.deque[tuple[float, float, float | None]] = collections.deque()
         self._ultimo = -1e18
         self._inicio: float | None = None
+        self.nivel = 0.0  # última pontuação calculada (para acompanhamento visual)
 
     @staticmethod
     def _z(atual: float, base: list[float], piso: float) -> float:
@@ -186,6 +187,7 @@ class DetectorPico:
             nota = max(z_chat, (pc * z_chat + pa * max(z_som, 0)) / (pc + pa) * 1.25)
             if not base_chat or max(base_chat) == 0:  # live sem chat: só áudio
                 nota = max(z_som, 0)
+        self.nivel = float(max(nota, 0))
         if nota >= self.limiar and t - self._ultimo >= self.espera:
             self._ultimo = t
             return float(nota)

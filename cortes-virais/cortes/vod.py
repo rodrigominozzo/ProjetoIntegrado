@@ -1,9 +1,11 @@
 """Pipeline de vídeo gravado: baixa, analisa os sinais, escolhe e renderiza os melhores cortes."""
 from __future__ import annotations
 
+import json
 import logging
-import shutil
 from pathlib import Path
+
+import numpy as np
 
 from . import chat, fontes, ia, render, sinais, transcricao
 from .banco import Banco
@@ -31,16 +33,29 @@ def finalizar(c: dict, video: Path, contexto: dict, cfg: dict, banco: Banco, pas
     corte_id = banco.novo_corte(
         video_id=contexto["id"], origem=origem, inicio=c["inicio"], fim=c["fim"], nota=c["nota"],
         titulo=c["titulo"], descricao=descricao, hashtags=c["hashtags"], arquivo=saida,
-        urgente=urgente)
+        urgente=urgente, teste=bool(contexto.get("teste")))
     log.info("Corte %s pronto: [%.0fs–%.0fs] nota %.0f — %s", corte_id, c["inicio"], c["fim"],
              c["nota"], c["titulo"])
     return corte_id
 
 
+def _reduzir(serie, pontos: int = 600) -> list[float]:
+    """Encolhe uma série por segundo para o gráfico, guardando o máximo de cada trecho."""
+    serie = np.asarray(serie, dtype=np.float32)
+    if len(serie) <= pontos:
+        return [round(float(v), 2) for v in serie]
+    bordas = np.linspace(0, len(serie), pontos + 1).astype(int)
+    return [round(float(serie[a:b].max()), 2) for a, b in zip(bordas[:-1], bordas[1:])]
+
+
 def processar(alvo: str, cfg: dict, banco: Banco, *, chat_arquivo: str | None = None,
-              forcar: bool = False) -> list[int]:
-    """Processa uma URL do YouTube ou arquivo local. Devolve os IDs dos cortes criados."""
-    meta = fontes.info(alvo)
+              forcar: bool = False, meta: dict | None = None, progresso=None) -> list[int]:
+    """Processa uma URL do YouTube ou arquivo local. Devolve os IDs dos cortes criados.
+
+    Com meta["teste"], os cortes são gerados mas ficam fora da fila de publicação.
+    """
+    progresso = progresso or (lambda etapa, fracao=None: None)
+    meta = meta or fontes.info(alvo)
     if meta["ao_vivo"]:
         raise ValueError("Este vídeo está ao vivo: use o comando 'live'.")
     if banco.status_video(meta["id"]) and not forcar:
@@ -58,12 +73,15 @@ def processar(alvo: str, cfg: dict, banco: Banco, *, chat_arquivo: str | None = 
     if "arquivo" in meta:
         arquivos = {"video": Path(meta["arquivo"]), "chat": chat_arquivo, "legenda": None}
     else:
-        arquivos = fontes.baixar(meta["url"], pasta, cfg["cortes"]["altura_max"], cfg["idioma"])
+        progresso("Baixando o vídeo", 0.0)
+        arquivos = fontes.baixar(meta["url"], pasta, cfg["cortes"]["altura_max"], cfg["idioma"],
+                                 progresso)
     video = Path(arquivos["video"])
     mensagens = chat.ler_replay(arquivos["chat"]) if arquivos["chat"] else []
     palavras = transcricao.ler_json3(arquivos["legenda"]) if arquivos["legenda"] else []
 
     # 1. Sinais -> candidatos (o triplo do necessário, para a IA escolher).
+    progresso("Medindo chat, áudio e replays")
     pontuacao, usados = sinais.analisar(
         audio=sinais.volume_por_segundo(video), mensagens=mensagens, replay=meta["replay"],
         duracao=meta["duracao"], cfg=cfg)
@@ -73,6 +91,7 @@ def processar(alvo: str, cfg: dict, banco: Banco, *, chat_arquivo: str | None = 
                                       cfg["cortes"]["intervalo_minimo"])
 
     # 2. Transcrição e ajuste das bordas para não cortar frases.
+    progresso("Transcrevendo os candidatos")
     candidatos = []
     for inicio, nota in janelas:
         fim = min(float(inicio + duracao), meta["duracao"] or inicio + duracao)
@@ -86,6 +105,7 @@ def processar(alvo: str, cfg: dict, banco: Banco, *, chat_arquivo: str | None = 
         })
 
     # 3. IA dá nota, título e descrição; ficam os melhores aprovados.
+    progresso("Avaliando com IA" if ia.disponivel(cfg) else "Ordenando pelos sinais")
     avaliados = ia.avaliar(candidatos, meta, video, cfg)
     bons = [c for c in avaliados if c["aprovado"] and c["nota"] >= cfg["ia"]["nota_minima"]]
     bons.sort(key=lambda c: c["nota"], reverse=True)
@@ -93,12 +113,26 @@ def processar(alvo: str, cfg: dict, banco: Banco, *, chat_arquivo: str | None = 
     log.info("%d candidatos, %d aprovados, %d escolhidos.", len(candidatos), len(bons),
              len(escolhidos))
 
+    # Registro da análise, para o painel mostrar o que foi considerado e por quê.
+    (pasta / "analise.json").write_text(json.dumps({
+        "duracao": meta["duracao"], "com_ia": ia.disponivel(cfg),
+        "pontos": _reduzir(pontuacao),
+        "sinais": {nome: _reduzir(serie) for nome, serie in usados.items()},
+        "candidatos": [{
+            "inicio": round(c["inicio"], 1), "fim": round(c["fim"], 1), "nota": c["nota"],
+            "aprovado": c["aprovado"], "escolhido": c in escolhidos, "titulo": c["titulo"],
+            "motivo": c["motivo"], "transcricao": c.get("transcricao", "")[:400],
+        } for c in sorted(avaliados, key=lambda c: c["inicio"])],
+    }, ensure_ascii=False), encoding="utf-8")
+
     # 4. Renderização.
-    criados = [finalizar(c, video, meta, cfg, banco, pasta, "vod", c["falas"]) for c in escolhidos]
-    banco.marcar_video(meta["id"], meta["titulo"], meta["canal"], "feito")
+    criados = []
+    for i, c in enumerate(escolhidos):
+        progresso(f"Renderizando corte {i + 1} de {len(escolhidos)}", i / len(escolhidos))
+        criados.append(finalizar(c, video, meta, cfg, banco, pasta, "vod", c["falas"]))
+    banco.marcar_video(meta["id"], meta["titulo"], meta["canal"],
+                       "teste" if meta.get("teste") else "feito")
     if cfg["cortes"]["apagar_fonte"] and "arquivo" not in meta:
         for p in pasta.glob("fonte.*"):
             p.unlink()
-    elif not criados and "arquivo" not in meta:
-        shutil.rmtree(pasta, ignore_errors=True)
     return criados

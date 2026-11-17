@@ -1,0 +1,365 @@
+"""Painel web: acompanha lives, análises, cortes e publicações num só lugar.
+
+Servidor local simples (biblioteca padrão). O Gerenciador roda as tarefas em segundo
+plano; a página consulta /api/estado a cada 2 segundos.
+"""
+from __future__ import annotations
+
+import itertools
+import json
+import logging
+import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import unquote
+
+from . import fontes, ia, publicar, transcricao, vod
+from .banco import MAX_TENTATIVAS, Banco
+from .live import MonitorLive
+
+log = logging.getLogger(__name__)
+PAGINA = Path(__file__).with_name("painel.html")
+
+
+class Gerenciador:
+    def __init__(self, cfg: dict, banco: Banco):
+        self.cfg, self.banco = cfg, banco
+        self.tarefas: dict[str, dict] = {}
+        self.lives: dict[str, MonitorLive] = {}
+        self._trava = threading.RLock()
+        self._fila = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analise")
+        self._seq = itertools.count(1)
+        self._ultima_busca = 0.0
+        threading.Thread(target=self._laco, daemon=True, name="painel-laco").start()
+
+    # --- entrada de links ---
+    def enviar(self, alvo: str, teste: bool, como_live: bool = False, origem: str = "manual") -> dict:
+        alvo = alvo.strip()
+        if not alvo:
+            raise ValueError("Informe um link do YouTube.")
+        if not re.match(r"https?://", alvo) and not Path(alvo).exists():
+            raise ValueError("Isso não é um link nem um arquivo que exista neste computador.")
+        tarefa = {
+            "id": f"t{next(self._seq)}", "alvo": alvo, "titulo": alvo, "canal": "", "teste": teste,
+            "origem": origem, "status": "identificando", "etapa": "Identificando o vídeo",
+            "fracao": None, "erro": "", "video_id": "", "cortes": 0, "inicio": time.time(),
+            "fim": None,
+        }
+        with self._trava:
+            self.tarefas[tarefa["id"]] = tarefa
+        threading.Thread(target=self._identificar, args=(tarefa, como_live), daemon=True).start()
+        return tarefa
+
+    def _identificar(self, tarefa: dict, como_live: bool) -> None:
+        try:
+            meta = fontes.info(tarefa["alvo"])
+            meta["teste"] = tarefa["teste"]
+            # Link enviado por você = canal confiável para cortes.
+            self.banco.canal_confiavel(meta["canal_id"], meta["canal"])
+            if meta["ao_vivo"] or como_live:
+                entrada = (["-re", "-i", meta["arquivo"], "-c", "copy"] if "arquivo" in meta else None)
+                self._iniciar_live(tarefa["alvo"], meta, entrada)
+                with self._trava:
+                    del self.tarefas[tarefa["id"]]
+                return
+            tarefa.update(titulo=meta["titulo"], canal=meta["canal"], video_id=meta["id"],
+                          status="fila", etapa="Na fila")
+            self._fila.submit(self._analisar, tarefa, meta)
+        except Exception as e:  # noqa: BLE001
+            log.exception("Falha ao identificar %s", tarefa["alvo"])
+            tarefa.update(status="erro", erro=_resumo(e), fim=time.time())
+
+    def _analisar(self, tarefa: dict, meta: dict) -> None:
+        def progresso(etapa: str, fracao: float | None = None) -> None:
+            tarefa.update(etapa=etapa, fracao=fracao)
+
+        tarefa.update(status="rodando", inicio=time.time())
+        try:
+            self.banco.remover_testes(meta["id"])  # um novo teste substitui o anterior
+            ids = vod.processar(tarefa["alvo"], self.cfg, self.banco, forcar=True, meta=meta,
+                                progresso=progresso)
+            tarefa.update(status="feito", etapa="Concluído", fracao=1.0, cortes=len(ids),
+                          fim=time.time())
+        except Exception as e:  # noqa: BLE001
+            log.exception("Falha ao analisar %s", tarefa["alvo"])
+            self.banco.marcar_video(meta["id"], meta["titulo"], meta["canal"], "erro")
+            tarefa.update(status="erro", erro=_resumo(e), fim=time.time())
+
+    # --- lives ---
+    def _iniciar_live(self, alvo: str, meta: dict, entrada: list[str] | None) -> None:
+        with self._trava:
+            atual = self.lives.get(meta["id"])
+            if atual and atual.estado["status"] in {"conectando", "acompanhando"}:
+                raise ValueError("Esta live já está sendo acompanhada.")
+            monitor = MonitorLive(alvo, self.cfg, self.banco, meta=meta, entrada_ffmpeg=entrada)
+            self.lives[meta["id"]] = monitor
+
+        def rodar() -> None:
+            try:
+                monitor.rodar()
+            except Exception as e:  # noqa: BLE001
+                log.exception("Live %s falhou", meta["id"])
+                monitor.estado.update(status="erro", erro=_resumo(e))
+
+        threading.Thread(target=rodar, daemon=True, name=f"live-{meta['id']}").start()
+
+    def parar_live(self, live_id: str) -> None:
+        self.lives[live_id].parar()
+
+    def fechar_live(self, live_id: str) -> None:
+        with self._trava:
+            if self.lives[live_id].estado["status"] in {"encerrada", "erro"}:
+                del self.lives[live_id]
+
+    def fechar_tarefa(self, tarefa_id: str) -> None:
+        with self._trava:
+            if self.tarefas[tarefa_id]["status"] in {"feito", "erro"}:
+                del self.tarefas[tarefa_id]
+
+    # --- segundo plano: publicação e canais seguidos ---
+    def _laco(self) -> None:
+        while True:
+            time.sleep(30)
+            try:
+                publicar.publicar_pendentes(self.cfg, self.banco)
+                if time.time() - self._ultima_busca >= self.cfg["auto"]["intervalo_min"] * 60:
+                    self._ultima_busca = time.time()
+                    self._buscar_nos_canais()
+            except Exception:  # noqa: BLE001
+                log.exception("Erro no ciclo de segundo plano")
+
+    def _buscar_nos_canais(self) -> None:
+        seguidos = [c["id"] for c in self.banco.canais() if c["seguir"]]
+        for canal in seguidos:
+            try:
+                achados = fontes._do_canal(canal, self.cfg["fontes"]["busca"]["max_resultados"])
+            except Exception as e:  # noqa: BLE001
+                log.warning("Falha ao listar canal %s: %s", canal, e)
+                continue
+            for a in achados:
+                with self._trava:
+                    ativas = sum(m.estado["status"] in {"conectando", "acompanhando"}
+                                 for m in self.lives.values())
+                    em_andamento = a["id"] in self.lives or any(
+                        t["video_id"] == a["id"] or t["alvo"] == a["url"]
+                        for t in self.tarefas.values())
+                if em_andamento or self.banco.status_video(a["id"]) not in (None, "teste"):
+                    continue
+                if a["ao_vivo"] and ativas >= self.cfg["live"]["max_simultaneas"]:
+                    continue
+                self.enviar(a["url"], teste=False, origem="canal seguido")
+
+    # --- retrato para a página ---
+    def estado(self) -> dict:
+        with self._trava:
+            lives = [{
+                "id": vid, "titulo": m.meta["titulo"], "canal": m.meta.get("canal", ""),
+                "url": m.meta.get("url", ""), "teste": bool(m.meta.get("teste")),
+                "cortes": len(m.cortes),
+                **{**m.estado, "historico": list(m.estado["historico"]),
+                   "picos": list(m.estado["picos"])[-8:]},
+            } for vid, m in self.lives.items()]
+            tarefas = sorted(self.tarefas.values(), key=lambda t: t["inicio"], reverse=True)
+            tarefas = [dict(t) for t in tarefas]
+
+        grupos: dict[str, dict] = {}
+        fila = []
+        for c in self.banco.todos_cortes():
+            item = {
+                "id": c["id"], "titulo": c["titulo"], "descricao": c["descricao"],
+                "hashtags": json.loads(c["hashtags"] or "[]"), "nota": c["nota"],
+                "inicio": c["inicio"], "fim": c["fim"], "origem": c["origem"],
+                "teste": bool(c["teste"]), "criado": c["criado"],
+                "existe": Path(c["arquivo"]).exists(),
+            }
+            for p in ("yt", "ig"):
+                if c[f"{p}_id"]:
+                    situacao = "publicado"
+                elif c["teste"]:
+                    situacao = "teste"
+                elif c[f"{p}_tentativas"] >= MAX_TENTATIVAS:
+                    situacao = "falhou"
+                else:
+                    situacao = "na fila"
+                item[p] = {"situacao": situacao, "link": c[f"{p}_link"] or "",
+                           "erro": c[f"{p}_erro"] or "", "quando": c[f"{p}_em"],
+                           "tentativas": c[f"{p}_tentativas"]}
+            grupo = grupos.setdefault(c["video_id"], {
+                "video_id": c["video_id"], "titulo": c["video_titulo"] or c["video_id"],
+                "canal": c["canal"] or "", "origem": c["origem"], "cortes": []})
+            grupo["cortes"].append(item)
+            if not c["teste"]:
+                fila.append({**item, "video": grupo["titulo"]})
+
+        contas = {}
+        for p, nome in publicar.NOMES.items():
+            cfg_p = self.cfg["publicar"][nome]
+            contas[p] = {
+                "ativo": cfg_p["ativo"], "conectado": publicar.conectado(p, self.cfg),
+                "hoje": self.banco.publicados_desde(p, time.time() - 86400),
+                "max": cfg_p["max_por_dia"],
+            }
+        return {
+            "lives": lives, "tarefas": tarefas, "grupos": list(grupos.values()), "fila": fila,
+            "contas": contas, "canais": [dict(c) for c in self.banco.canais()],
+            "publicacao_auto": self.banco.opcao("publicacao_auto", "1") == "1",
+            "ia": ia.disponivel(self.cfg), "whisper": transcricao.whisper_disponivel(),
+            "intervalo_min": self.cfg["publicar"]["intervalo_min"],
+        }
+
+    # --- ações da página ---
+    def acao(self, nome: str, d: dict) -> dict:
+        if nome == "enviar":
+            self.enviar(d.get("alvo", ""), bool(d.get("teste")), bool(d.get("como_live")))
+        elif nome == "live/parar":
+            self.parar_live(d["id"])
+        elif nome == "live/fechar":
+            self.fechar_live(d["id"])
+        elif nome == "tarefa/fechar":
+            self.fechar_tarefa(d["id"])
+        elif nome == "corte/aprovar":
+            self.banco.aprovar(int(d["id"]))
+        elif nome == "corte/remover":
+            if not self.banco.remover_corte(int(d["id"])):
+                raise ValueError("Cortes já publicados não podem ser removidos por aqui.")
+        elif nome == "corte/publicar":
+            corte = self.banco.corte(int(d["id"]))
+            plataforma = d["plataforma"]
+            if not corte or plataforma not in publicar.NOMES:
+                raise ValueError("Corte ou plataforma inválidos.")
+            if corte[f"{plataforma}_id"]:
+                raise ValueError("Este corte já foi publicado nessa plataforma.")
+            if not publicar.conectado(plataforma, self.cfg):
+                raise ValueError(f"A conta do {publicar.NOMES[plataforma]} ainda não está conectada.")
+            if corte["teste"]:
+                raise ValueError("Aprove o corte de teste antes de publicar.")
+            self.banco.tentar_de_novo(corte["id"], plataforma)
+            threading.Thread(target=publicar.publicar_um, daemon=True,
+                             args=(self.cfg, self.banco, corte, plataforma)).start()
+        elif nome == "canal/seguir":
+            self.banco.seguir_canal(d["id"], bool(d["seguir"]))
+            self._ultima_busca = 0.0
+        elif nome == "canal/remover":
+            self.banco.remover_canal(d["id"])
+        elif nome == "publicacao_auto":
+            self.banco.definir_opcao("publicacao_auto", "1" if d["ligada"] else "0")
+        else:
+            raise KeyError(nome)
+        return {"ok": True}
+
+
+def _resumo(e: Exception) -> str:
+    texto = re.sub(r"\x1b\[[0-9;]*m", "", str(e)).strip() or type(e).__name__
+    return texto[:300]
+
+
+def _manipulador(ger: Gerenciador):
+    class Manipulador(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *args) -> None:  # silencia o log por requisição
+            pass
+
+        def _json(self, dados, codigo: int = 200) -> None:
+            corpo = json.dumps(dados, ensure_ascii=False).encode()
+            self.send_response(codigo)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(corpo)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(corpo)
+
+        def _arquivo(self, caminho: Path, tipo: str) -> None:
+            """Serve um arquivo com suporte a Range (necessário para o player de vídeo)."""
+            if not caminho.exists():
+                return self._json({"erro": "Arquivo não encontrado."}, 404)
+            tamanho = caminho.stat().st_size
+            ini, fim = 0, tamanho - 1
+            faixa = re.match(r"bytes=(\d*)-(\d*)", self.headers.get("Range", ""))
+            if faixa and (faixa[1] or faixa[2]):
+                if faixa[1]:
+                    ini = int(faixa[1])
+                    fim = min(int(faixa[2]), fim) if faixa[2] else fim
+                else:
+                    ini = max(0, tamanho - int(faixa[2]))
+                if ini > fim:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{tamanho}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                self.send_response(206)
+                self.send_header("Content-Range", f"bytes {ini}-{fim}/{tamanho}")
+            else:
+                self.send_response(200)
+            self.send_header("Content-Type", tipo)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(fim - ini + 1))
+            self.end_headers()
+            with open(caminho, "rb") as f:
+                f.seek(ini)
+                resta = fim - ini + 1
+                try:
+                    while resta > 0:
+                        bloco = f.read(min(256 * 1024, resta))
+                        if not bloco:
+                            break
+                        self.wfile.write(bloco)
+                        resta -= len(bloco)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass  # o navegador fechou a conexão ao pular no vídeo
+
+        def do_GET(self) -> None:  # noqa: N802
+            rota = self.path.split("?")[0]
+            if rota == "/":
+                return self._arquivo(PAGINA, "text/html; charset=utf-8")
+            if rota == "/api/estado":
+                return self._json(ger.estado())
+            m = re.fullmatch(r"/midia/(\d+)", rota)
+            if m:
+                corte = ger.banco.corte(int(m[1]))
+                if not corte:
+                    return self._json({"erro": "Corte não encontrado."}, 404)
+                return self._arquivo(Path(corte["arquivo"]), "video/mp4")
+            m = re.fullmatch(r"/api/analise/([^/]+)", unquote(rota))
+            if m and m[1] not in {".", ".."}:
+                arq = Path(ger.cfg["pasta_trabalho"]) / m[1] / "analise.json"
+                return self._arquivo(arq, "application/json; charset=utf-8")
+            self._json({"erro": "Não encontrado."}, 404)
+
+        def do_POST(self) -> None:  # noqa: N802
+            tamanho = int(self.headers.get("Content-Length") or 0)
+            corpo = self.rfile.read(tamanho) if tamanho else b"{}"
+            # Cabeçalho próprio: impede que outro site dispare ações neste painel.
+            if self.headers.get("X-Painel") != "1" or not self.path.startswith("/api/"):
+                return self._json({"erro": "Requisição recusada."}, 403)
+            try:
+                self._json(ger.acao(self.path[len("/api/"):], json.loads(corpo or b"{}")))
+            except (ValueError, KeyError) as e:
+                self._json({"erro": str(e) or "Pedido inválido."}, 400)
+            except Exception as e:  # noqa: BLE001
+                log.exception("Erro na ação %s", self.path)
+                self._json({"erro": _resumo(e)}, 500)
+
+    return Manipulador
+
+
+def servir(cfg: dict, banco: Banco, host: str = "127.0.0.1", porta: int = 8000) -> None:
+    class Servidor(ThreadingHTTPServer):
+        daemon_threads = True
+
+        def handle_error(self, request, client_address) -> None:
+            import sys
+            if not isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError)):
+                super().handle_error(request, client_address)  # navegador fechando conexão é normal
+
+    servidor = Servidor((host, porta), _manipulador(Gerenciador(cfg, banco)))
+    log.info("Painel em http://%s:%d", "localhost" if host in {"127.0.0.1", "0.0.0.0"} else host,
+             servidor.server_address[1])
+    try:
+        servidor.serve_forever()
+    except KeyboardInterrupt:
+        log.info("Painel encerrado.")
