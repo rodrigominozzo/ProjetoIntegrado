@@ -19,10 +19,16 @@ from . import chat as chat_mod
 TAXA = 8000  # Hz usados só para medir volume
 
 
-def volume_por_segundo(arquivo: str | Path) -> np.ndarray:
-    """RMS em dB de cada segundo do áudio."""
+def volume_por_segundo(arquivo: str | Path, inicio: float | None = None,
+                       duracao: float | None = None) -> np.ndarray:
+    """RMS em dB de cada segundo do áudio (do arquivo inteiro ou de um trecho)."""
+    trecho = []
+    if inicio is not None:
+        trecho += ["-ss", f"{inicio:.2f}"]
+    if duracao is not None:
+        trecho += ["-t", f"{duracao:.2f}"]
     proc = subprocess.Popen(
-        ["ffmpeg", "-v", "error", "-i", str(arquivo), "-vn", "-ac", "1", "-ar", str(TAXA),
+        ["ffmpeg", "-v", "error", *trecho, "-i", str(arquivo), "-vn", "-ac", "1", "-ar", str(TAXA),
          "-f", "s16le", "-"],
         stdout=subprocess.PIPE,
     )

@@ -133,6 +133,31 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .contas .cartao b.grande { font-size: 24px; font-variant-numeric: tabular-nums; }
 .celula { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; min-width: 150px; }
 
+.passo { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--borda); }
+.passo:first-of-type { border-top: 0; }
+.passo .num { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+              font-weight: 700; background: var(--painel2); color: var(--suave); }
+.passo.feito .num { background: var(--ok); color: #fff; }
+.passo > div { flex: 1; min-width: 0; }
+.passo ol { margin: 8px 0; padding-left: 20px; color: var(--suave); font-size: 14px; }
+.passo ol li { margin: 3px 0; }
+details > summary { cursor: pointer; color: var(--info); font-size: 14px; margin-top: 4px; }
+.campo { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 6px 18px; align-items: center;
+         padding: 12px 0; border-top: 1px solid var(--borda); }
+.campo:first-of-type { border-top: 0; }
+.campo label { font-weight: 600; }
+.campo .sub { grid-column: 1; }
+.campo .entrada { grid-column: 2; grid-row: 1 / span 2; justify-self: end; width: 100%; display: flex; justify-content: flex-end; }
+.campo input[type=text], .campo input[type=number], .campo select, .linha-chave input, textarea {
+  width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--borda); background: var(--fundo); color: var(--texto); font: inherit; }
+.campo input[type=color] { width: 56px; height: 34px; padding: 2px; border-radius: 8px; border: 1px solid var(--borda); background: var(--fundo); }
+textarea { min-height: 220px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+.linha-chave { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.linha-chave input { flex: 1 1 220px; }
+.secao-config { margin-bottom: 16px; }
+.secao-config h2 { margin: 0 0 2px; font-size: 17px; }
+.rodape-config { position: sticky; bottom: 0; background: var(--fundo); padding: 12px 0; display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--borda); }
+@media (max-width: 640px) { .campo { grid-template-columns: 1fr; } .campo .entrada { grid-column: 1; grid-row: auto; justify-content: flex-start; } }
 #avisos { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 9; }
 .aviso { background: var(--painel); border: 1px solid var(--borda); border-left: 4px solid var(--ok);
          padding: 10px 14px; border-radius: 9px; max-width: 360px; box-shadow: 0 6px 24px #0005; font-size: 14px; }
@@ -164,6 +189,7 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
     <button data-aba="cortes">Cortes <span class="conta" id="n-cortes">0</span></button>
     <button data-aba="publicacoes">Publicações <span class="conta" id="n-fila">0</span></button>
     <button data-aba="canais">Canais <span class="conta" id="n-canais">0</span></button>
+    <button data-aba="config">Configurações</button>
   </nav>
 
   <section class="aba" id="aba-lives"><div class="grade" id="lista-lives"></div></section>
@@ -177,6 +203,7 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
     </table></div><div id="fila-vazia"></div></div>
   </section>
   <section class="aba" id="aba-canais"><div id="lista-canais"></div></section>
+  <section class="aba" id="aba-config"><div id="config"><div class="sub">Carregando…</div></div></section>
 </div>
 <div id="avisos"></div>
 
@@ -389,6 +416,110 @@ const linhaCanal = c => `<div class="linha"><div><h3>${e(c.nome || c.id)}</h3>
     <label class="chave verde"><input type="checkbox" data-seguir="${e(c.id)}" ${c.seguir ? "checked" : ""}> Acompanhar automaticamente</label>
     <button class="btn mini perigo" data-acao="canal/remover" data-id="${e(c.id)}" data-confirmar="Remover este canal da lista?">Remover</button></div>`;
 
+// ---------- configurações ----------
+let ajustes = null;
+async function carregarConfig() {
+  try { ajustes = await (await fetch("/api/ajustes")).json(); desenharConfig(); }
+  catch (err) { $("#config").innerHTML = vazio("Não foi possível carregar", "Verifique se o painel está rodando."); }
+}
+function entrada(c) {
+  const id = `data-campo="${e(c.chave)}"`;
+  if (c.tipo === "booleano") return `<label class="chave verde"><input type="checkbox" ${id} ${c.valor ? "checked" : ""}></label>`;
+  if (c.tipo === "escolha") return `<select ${id}>${c.opcoes.map(o => `<option value="${e(o[0])}" ${o[0] === c.valor ? "selected" : ""}>${e(o[1])}</option>`).join("")}</select>`;
+  if (c.tipo === "cor") return `<input type="color" ${id} value="${e(c.valor)}">`;
+  if (c.tipo === "texto") return `<input type="text" ${id} value="${e(c.valor)}">`;
+  return `<input type="number" ${id} value="${e(c.valor)}" min="${c.min ?? ""}" max="${c.max ?? ""}" step="${c.tipo === "inteiro" ? 1 : 0.1}">`;
+}
+function campoChave(nome, dica) {
+  const c = ajustes.chaves.find(x => x.nome === nome);
+  return `<div class="linha-chave"><input type="password" autocomplete="off" data-chave="${nome}" placeholder="${c.definida ? "Já configurada — cole outra para trocar" : dica}">
+    <button class="btn mini" data-salvar-chave="${nome}">Salvar</button></div>`;
+}
+function passo(n, feito, titulo, resumo, corpo, aberto) {
+  return `<div class="passo ${feito ? "feito" : ""}"><span class="num">${feito ? "✓" : n}</span><div>
+    <b>${titulo}</b> <span class="selo ${feito ? "ok" : ""}">${feito ? "Pronto" : "Pendente"}</span>
+    <div class="sub">${resumo}</div>
+    <details ${aberto ? "open" : ""}><summary>${feito ? "Ver ou refazer" : "Como fazer"}</summary>${corpo}</details></div></div>`;
+}
+function desenharConfig() {
+  const a = ajustes, yt = a.youtube;
+  const primeiro = !a.ia ? 1 : !yt.conectado ? 2 : !a.instagram ? 3 : !a.tem_cortes ? 4 : 0;
+  const passos = `<div class="cartao secao-config"><h2>Primeiros passos</h2>
+    <div class="sub" style="margin-bottom:6px">Faça na ordem. O sistema já funciona em modo teste depois do passo 1.</div>
+    ${passo(1, a.ia, "Ligar a inteligência artificial", "É ela que escolhe os melhores trechos e escreve gancho e título.", `
+      <ol><li>Abra <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> e crie uma conta.</li>
+      <li>Em “API Keys”, clique em “Create Key” e copie a chave (começa com sk-ant-).</li>
+      <li>Adicione créditos em “Billing”. Cada vídeo analisado custa centavos.</li>
+      <li>Cole a chave abaixo e clique em Salvar.</li></ol>${campoChave("ANTHROPIC_API_KEY", "sk-ant-…")}`, primeiro === 1)}
+    ${passo(2, yt.conectado, "Conectar o canal do YouTube", "Para os cortes serem enviados como Shorts.", `
+      <ol><li>Abra <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console.cloud.google.com</a> e crie um projeto.</li>
+      <li>Em “APIs e serviços” → “Biblioteca”, ative a <b>YouTube Data API v3</b>.</li>
+      <li>Em “Tela de permissão OAuth”, escolha “Externo” e adicione seu e-mail como usuário de teste.</li>
+      <li>Em “Credenciais” → “Criar credenciais” → “ID do cliente OAuth”, escolha <b>App para computador</b> e baixe o arquivo JSON.</li>
+      <li>Abra o arquivo num editor de texto, copie tudo e cole abaixo.</li>
+      <li>Clique em “Conectar canal” e autorize com a conta do canal de destino.</li></ol>
+      <textarea id="segredo-yt" style="min-height:90px" placeholder='${yt.tem_segredo ? "client_secret.json já salvo — cole outro para trocar" : "Cole aqui o conteúdo do client_secret.json"}'></textarea>
+      <div class="linha" style="margin-top:8px"><button class="btn mini" id="salvar-segredo">Salvar arquivo</button>
+      <button class="btn mini principal" id="conectar-yt" ${yt.tem_segredo ? "" : "disabled"}>Conectar canal</button></div>
+      <div class="sub" style="margin-top:8px">Os envios ficam privados até o Google auditar o projeto. O pedido é feito no formulário “YouTube API Services – Audit and Quota Extension”.</div>`, primeiro === 2)}
+    ${passo(3, a.instagram, "Conectar o Instagram", "Para os cortes serem publicados como Reels.", `
+      <ol><li>A conta do Instagram precisa ser <b>profissional</b> (Criador ou Empresa).</li>
+      <li>Em <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener">developers.facebook.com</a>, crie um app e adicione o produto “Instagram”.</li>
+      <li>Gere um token de acesso com a permissão de publicar conteúdo (instagram_content_publish) e troque-o por um de longa duração.</li>
+      <li>Copie o ID da conta do Instagram e o token e cole abaixo.</li></ol>
+      ${campoChave("IG_USER_ID", "ID numérico da conta")}${campoChave("IG_ACCESS_TOKEN", "Token de longa duração")}
+      <div class="sub" style="margin-top:8px">O token de longa duração vale cerca de 60 dias; quando vencer, as publicações falham e é só colar um novo aqui.</div>`, primeiro === 3)}
+    ${passo(4, a.tem_cortes, "Fazer o primeiro teste", "Veja o que o sistema cortaria, sem publicar nada.", `
+      <ol><li>Ligue a chave <b>Modo teste</b> no topo da página.</li>
+      <li>Cole o link de um vídeo de um canal que você pretende cortar e clique em Enviar.</li>
+      <li>Acompanhe na aba Análises. Ao terminar, “Ver análise” mostra cada trecho considerado e por quê.</li>
+      <li>Assista aos cortes na aba Cortes. Gostou de um? “Aprovar e publicar”.</li>
+      <li>Se vieram cortes demais ou fracos, suba a “Nota mínima”; se vieram de menos, baixe.</li></ol>`, primeiro === 4)}
+    <div class="sub" style="margin-top:10px">Recursos opcionais: enquadramento que segue rostos ${a.rostos ? "✓ instalado" : "— instale com <code>pip install \"opencv-python-headless&lt;5\"</code>"} · legendas automáticas ${a.whisper ? "✓ instaladas" : "— instale com <code>pip install faster-whisper</code>"} · chat de lives — <code>pip install chat-downloader</code>.</div>
+  </div>`;
+  const secoes = a.secoes.map(s => `<div class="cartao secao-config"><h2>${e(s.titulo)}</h2><div class="sub" style="margin-bottom:6px">${e(s.descricao)}</div>
+    ${s.campos.map(c => `<div class="campo"><label>${e(c.rotulo)}</label><div class="sub">${e(c.ajuda)}</div><div class="entrada">${entrada(c)}</div></div>`).join("")}</div>`).join("");
+  const bases = `<div class="cartao secao-config"><h2>Bases de conhecimento</h2>
+    <div class="sub">Textos que a IA lê antes de avaliar. Uma base entra quando o título do vídeo, o canal ou a transcrição contém uma das <b>palavras</b> da primeira linha; com <code>sempre: sim</code>, entra em toda avaliação. Use para ensinar sobre um jogo, um streamer ou o estilo do seu canal.</div>
+    ${a.bases.map(b => `<details style="margin-top:10px"><summary><b>${e(b.nome)}</b> — ${b.sempre ? "sempre ativa" : "ativa com: " + e(b.palavras.slice(0, 5).join(", ") || "nenhuma palavra")}</summary>
+      <textarea data-base="${e(b.nome)}">${e(b.conteudo)}</textarea>
+      <div class="linha" style="margin-top:6px"><button class="btn mini" data-salvar-base="${e(b.nome)}">Salvar</button>
+      <button class="btn mini perigo" data-remover-base="${e(b.nome)}">Remover</button></div></details>`).join("")}
+    <details style="margin-top:10px"><summary>Nova base</summary>
+      <div class="linha-chave"><input type="text" id="nova-base-nome" placeholder="Nome (ex.: minecraft)"></div>
+      <textarea id="nova-base-texto" style="margin-top:8px">palavras: palavra 1, palavra 2\n---\nEscreva aqui o que a IA precisa saber sobre o assunto.</textarea>
+      <div class="linha" style="margin-top:6px"><button class="btn mini" id="criar-base">Criar</button></div></details></div>`;
+  $("#config").innerHTML = passos + secoes + bases + `<div class="rodape-config"><button class="btn principal" id="salvar-config">Salvar configurações</button><span class="sub">Valem na hora, para os próximos cortes.</span></div>`;
+}
+async function acaoConfig(nome, dados, ok) { if (await acao(nome, dados, ok)) carregarConfig(); }
+document.addEventListener("click", async ev => {
+  const t = ev.target;
+  if (t.id === "salvar-config") {
+    const valores = {};
+    document.querySelectorAll("[data-campo]").forEach(el => valores[el.dataset.campo] = el.type === "checkbox" ? el.checked : el.value);
+    acaoConfig("ajustes/salvar", {valores}, "Configurações salvas.");
+  } else if (t.dataset.salvarChave) {
+    const campo = document.querySelector(`[data-chave="${t.dataset.salvarChave}"]`);
+    acaoConfig("chave", {nome: t.dataset.salvarChave, valor: campo.value}, "Chave salva.");
+  } else if (t.id === "salvar-segredo") {
+    acaoConfig("youtube/segredo", {conteudo: $("#segredo-yt").value}, "Arquivo salvo. Agora clique em Conectar canal.");
+  } else if (t.id === "conectar-yt") {
+    try {
+      const r = await fetch("/api/youtube/conectar", {method: "POST", body: "{}", headers: {"X-Painel": "1"}});
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.erro);
+      window.open(j.url, "_blank", "noopener");
+      avisar("Autorize na aba que abriu e depois volte aqui.");
+    } catch (err) { avisar(err.message, true); }
+  } else if (t.dataset.salvarBase) {
+    acaoConfig("base/salvar", {nome: t.dataset.salvarBase, conteudo: document.querySelector(`[data-base="${t.dataset.salvarBase}"]`).value}, "Base salva.");
+  } else if (t.dataset.removerBase) {
+    if (confirm("Remover esta base de conhecimento?")) acaoConfig("base/remover", {nome: t.dataset.removerBase}, "Base removida.");
+  } else if (t.id === "criar-base") {
+    acaoConfig("base/salvar", {nome: $("#nova-base-nome").value, conteudo: $("#nova-base-texto").value}, "Base criada.");
+  }
+});
+
 // ---------- desenho geral ----------
 function desenhar() {
   const s = estado;
@@ -441,6 +572,7 @@ function abrirAba(nome) {
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("ativa", b.dataset.aba === nome));
   document.querySelectorAll(".aba").forEach(a => a.classList.toggle("ativa", a.id === "aba-" + nome));
   try { localStorage.setItem("aba", nome); } catch (err) {}
+  if (nome === "config") carregarConfig();
 }
 
 // ---------- eventos ----------

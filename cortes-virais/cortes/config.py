@@ -29,6 +29,7 @@ PADRAO = {
         "karaoke": True,          # destaca a palavra que está sendo falada
         "cor_destaque": "#FFE000",
         "gancho": True,           # frase de impacto fixa no topo do vídeo
+        "marca": "",              # nome do seu canal, discreto no canto (ex.: @meucanal)
         "altura_max": 1080,
         "apagar_fonte": True,
     },
@@ -37,7 +38,21 @@ PADRAO = {
         "atraso_chat": 6,  # o chat reage alguns segundos depois do momento
     },
     "transcricao": {"whisper": "small"},  # usado só se faster-whisper estiver instalado
-    "ia": {"ativa": True, "modelo": "claude-opus-5-5", "nota_minima": 60, "quadros": 3},
+    "ia": {
+        "ativa": True, "nota_minima": 60, "quadros": 3,
+        # Um modelo para cada papel: o mais rápido peneira, o mais capaz decide.
+        "modelos": {"triagem": "claude-haiku-5-5", "ao_vivo": "claude-sonnet-5-5",
+                    "final": "claude-opus-5-5"},
+    },
+    "edicao": {
+        "dinamica": True,          # troca de plano e zoom ao longo do corte
+        "abrir_no_rosto": True,    # gameplay: começa no rosto do jogador
+        "cortar_silencios": True,  # tira as pausas longas de fala
+        "pausa_minima": 1.2,       # segundos de silêncio para ser cortado
+        "abertura_pico": True,     # permite abrir com 1,5 s do ápice (a IA decide quando)
+        "barra_progresso": True,
+    },
+    "conhecimento": {"pasta": "conhecimento"},
     "live": {
         "limiar": 4.0,
         "min_mensagens": 8,

@@ -82,7 +82,7 @@ def test_bordas_e_legendas():
     ass = transcricao.gerar_ass(palavras, 0, 5, 1080, 1920, credito="Créditos: Canal",
                                 gancho="Ninguém esperava", karaoke=False)
     assert "ISSO FOI" in ass and "MUITO BOM" in ass and "Créditos: Canal" in ass
-    assert "Gancho,,0,0,0,,Ninguém esperava" in ass
+    assert "Gancho,,0,0,0,," in ass and "}Ninguém esperava" in ass
     karaoke = transcricao.gerar_ass(palavras, 0, 5, 1080, 1920, cor_destaque="#FFE000")
     assert "{\\c&H00E0FF&}ISSO{\\c&HFFFFFF&} FOI" in karaoke   # 1ª palavra em destaque
     assert "ISSO {\\c&H00E0FF&}FOI{\\c&HFFFFFF&}" in karaoke   # depois a 2ª
@@ -207,8 +207,9 @@ def test_layouts_por_rosto():
     # rosto que aparece em poucos quadros é ruído
     ruido = [[(0.5, 0.5, 0.2, 0.3)]] + [[] for _ in range(9)]
     assert enq.classificar(ruido)["tipo"] == "blur"
-    for layout in (dupla, enq.classificar(cena((0.1, 0.82, 0.07, 0.12)))):
-        assert "vstack" in enq.filtro(layout, 1920, 1080)
+    facecam = enq.classificar(cena((0.1, 0.82, 0.07, 0.12)))
+    assert "vstack" in enq.cadeia("dupla", dupla, 1920, 1080, 1.0, "e", "s", "p")
+    assert "vstack" in enq.cadeia("dividido", facecam, 1920, 1080, 1.0, "e", "s", "p")
 
 
 def test_ia_recebe_referencias_do_canal(tmp_path):
@@ -226,3 +227,70 @@ def test_ia_recebe_referencias_do_canal(tmp_path):
     texto = desempenho.referencias(banco)
     assert texto.index("Corte 8") < texto.index("Menos vistos") < texto.index("Corte 0")
     assert 'gancho: "Gancho 8"' in texto
+
+
+def test_plano_de_edicao_gameplay():
+    from cortes import edicao
+
+    layout = {"tipo": "facecam", "rosto": {"cx": 0.1, "cy": 0.8, "w": 0.05, "h": 0.09}}
+    energia = np.full(30, -40.0)
+    energia[18] = -5                                    # grito aos 18 s
+    plano = edicao.planejar(layout, 100, 130, energia=energia, cfg={})
+    vistas = [p["vista"] for p in plano["pedacos"]]
+    assert vistas[0] == "reacao"                        # abre no rosto do jogador
+    assert {"dividido", "jogo"} <= set(vistas)          # alterna tela dividida e jogo
+    no_pico = next(p for p in plano["pedacos"] if p["a"] <= 118.6 < p["b"])
+    assert no_pico["vista"] == "reacao"                 # volta ao rosto na reação
+    assert plano["duracao"] == pytest.approx(30, abs=0.05)
+    assert plano["pedacos"][0]["a"] == 100 and plano["pedacos"][-1]["b"] == pytest.approx(130)
+    parado = edicao.planejar(layout, 100, 130, energia=energia, cfg={"dinamica": False})
+    assert [p["vista"] for p in parado["pedacos"]] == ["dividido"]
+
+
+def test_plano_corta_silencio_e_abre_pelo_pico():
+    from cortes import edicao
+
+    layout = {"tipo": "rosto", "rosto": {"cx": 0.5, "cy": 0.4, "w": 0.2, "h": 0.3}}
+    falas = [(10 + i * 0.4, 10.3 + i * 0.4, f"a{i}") for i in range(10)]        # 10,0–13,9
+    falas += [(18 + i * 0.4, 18.3 + i * 0.4, f"b{i}") for i in range(20)]       # 18,0–25,9
+    plano = edicao.planejar(layout, 10, 26, palavras=falas, momento=22.0, abrir_com_pico=True,
+                            cfg={})
+    previa, resto = plano["pedacos"][0], plano["pedacos"][1:]
+    assert previa["a"] == pytest.approx(21.7) and plano["flash"] == pytest.approx(1.7)
+    assert not any(p["a"] < 16 < p["b"] for p in resto)       # o silêncio de 14–18 s saiu
+    assert plano["duracao"] < 16 + 1.7 - 3
+    assert any(p["zoom"] > 1.3 for p in resto)                # zoom fechado no momento-chave
+    legendas = edicao.remapear(falas, plano["pedacos"])
+    assert legendas[0][2] == "b10"                            # a prévia traz as falas do pico
+    assert all(b > a >= 0 for a, b, _ in legendas)
+
+
+def test_bases_de_conhecimento(tmp_path):
+    from cortes import conhecimento
+
+    cfg = {"conhecimento": {"pasta": str(tmp_path)}}
+    conhecimento.salvar(cfg, "GTA VI", "palavras: gta 6, vice city\n---\nLucia e Jason.")
+    conhecimento.salvar(cfg, "estilo", "sempre: sim\n---\nComece no meio da ação.")
+    geral = conhecimento.selecionar("Live de Minecraft", cfg)
+    assert "meio da ação" in geral and "Lucia" not in geral
+    assert "Lucia" in conhecimento.selecionar("JOGANDO GTA 6 PELA PRIMEIRA VEZ", cfg)
+    assert "Lucia" not in conhecimento.selecionar("gta 60 anos depois", cfg)   # palavra inteira
+
+
+def test_ajustes_validam_e_gravam(tmp_path):
+    import yaml
+
+    from cortes import ajustes
+
+    cfg = config.carregar(None)
+    arq = tmp_path / "config.yaml"
+    ajustes.salvar(cfg, {"cortes.duracao": "35", "ia.modelos.triagem": "claude-haiku-5-5",
+                         "edicao.dinamica": False, "live.limiar": "4,5"}, arq)
+    assert cfg["cortes"]["duracao"] == 35 and cfg["edicao"]["dinamica"] is False
+    assert yaml.safe_load(arq.read_text())["live"]["limiar"] == 4.5
+    with pytest.raises(ValueError, match="entre"):
+        ajustes.salvar(cfg, {"ia.nota_minima": 500}, arq)
+    with pytest.raises(ValueError, match="mínima"):
+        ajustes.salvar(cfg, {"cortes.duracao_min": 60, "cortes.duracao_max": 30}, arq)
+    assert cfg["cortes"]["duracao_min"] == 20                 # nada foi aplicado no erro
+    assert sum(len(s["campos"]) for s in ajustes.descrever(cfg)) >= 30

@@ -126,30 +126,51 @@ def _caixa(cx: float, cy: float, cw: float, ch: float, w: int, h: int) -> str:
     return f"crop={cw}:{ch}:{x}:{y}"
 
 
-def filtro(layout: dict, w: int, h: int, largura: int = 1080, altura: int = 1920) -> str | None:
-    """Trecho de filter_complex para o layout (sem rótulo de saída). None = usar blur."""
-    tipo = layout["tipo"]
-    if tipo == "rosto":
-        r = layout["rosto"]
-        return (f"[0:v]{_caixa(r['cx'] * w, h / 2, h * largura / altura, h, w, h)},"
-                f"scale={largura}:{altura},setsar=1")
-    if tipo == "dupla":
+VISTA_BASE = {"rosto": "rosto", "dupla": "dupla", "facecam": "dividido", "blur": "blur"}
+
+
+def cadeia(vista: str, layout: dict, w: int, h: int, zoom: float, ent: str, sai: str, p: str,
+           largura: int = 1080, altura: int = 1920) -> str:
+    """Filtros que levam o fluxo [ent] ao quadro vertical [sai] na vista pedida.
+
+    Vistas: rosto (9:16 no rosto), reacao (close no rosto da facecam), jogo/preencher
+    (recorte central), dividido (câmera em cima, jogo embaixo), dupla, blur.
+    `p` é um prefixo único para os rótulos internos.
+    """
+    fim = f"scale={largura}:{altura},setsar=1[{sai}]"
+    proporcao = largura / altura
+    r = layout.get("rosto")
+    if vista == "rosto" and r:
+        ch = h / zoom
+        cy = h / 2 if zoom <= 1.01 else r["cy"] * h + ch * 0.12
+        return f"[{ent}]{_caixa(r['cx'] * w, cy, ch * proporcao, ch, w, h)},{fim}"
+    if vista == "reacao" and r:
+        ch = min(h, r["h"] * h * 4.2 / zoom)
+        return f"[{ent}]{_caixa(r['cx'] * w, r['cy'] * h + ch * 0.1, ch * proporcao, ch, w, h)},{fim}"
+    if vista in {"jogo", "preencher"}:
+        ch = h / zoom
+        return f"[{ent}]{_caixa(w / 2, h / 2, ch * proporcao, ch, w, h)},{fim}"
+    if vista == "dupla" and layout.get("pessoas"):
         meia = altura // 2
         cw = min(h * largura / meia, w * 0.5)
         ch = cw * meia / largura
-        partes = []
-        for nome, p in zip("tu", layout["pessoas"]):
-            # rosto um pouco acima do centro do painel
-            partes.append(f"[{nome}0]{_caixa(p['cx'] * w, p['cy'] * h + ch * 0.12, cw, ch, w, h)},"
-                          f"scale={largura}:{meia},setsar=1[{nome}]")
-        return f"[0:v]split[t0][u0];{partes[0]};{partes[1]};[t][u]vstack"
-    if tipo == "facecam":
-        r = layout["rosto"]
+        a, b = layout["pessoas"][:2]
+        return (f"[{ent}]split[{p}a][{p}b];"
+                f"[{p}a]{_caixa(a['cx'] * w, a['cy'] * h + ch * 0.12, cw, ch, w, h)},"
+                f"scale={largura}:{meia},setsar=1[{p}t];"
+                f"[{p}b]{_caixa(b['cx'] * w, b['cy'] * h + ch * 0.12, cw, ch, w, h)},"
+                f"scale={largura}:{meia},setsar=1[{p}u];[{p}t][{p}u]vstack[{sai}]")
+    if vista == "dividido" and r:
         topo = altura // 3
         cw = min(r["w"] * w * 3.4, w)
         ch = cw * topo / largura
         cam = _caixa(r["cx"] * w, r["cy"] * h + ch * 0.08, cw, ch, w, h)
         jogo = _caixa(w / 2, h / 2, h * largura / (altura - topo), h, w, h)
-        return (f"[0:v]split[t0][u0];[t0]{cam},scale={largura}:{topo},setsar=1[t];"
-                f"[u0]{jogo},scale={largura}:{altura - topo},setsar=1[u];[t][u]vstack")
-    return None
+        return (f"[{ent}]split[{p}a][{p}b];[{p}a]{cam},scale={largura}:{topo},setsar=1[{p}t];"
+                f"[{p}b]{jogo},scale={largura}:{altura - topo},setsar=1[{p}u];"
+                f"[{p}t][{p}u]vstack[{sai}]")
+    # blur: vídeo inteiro ao centro sobre fundo desfocado
+    return (f"[{ent}]split[{p}a][{p}b];"
+            f"[{p}a]scale={largura}:{altura}:force_original_aspect_ratio=increase,"
+            f"crop={largura}:{altura},boxblur=24:4,eq=brightness=-0.08[{p}f];"
+            f"[{p}b]scale={largura}:-2[{p}g];[{p}f][{p}g]overlay=(W-w)/2:(H-h)/2,setsar=1[{sai}]")

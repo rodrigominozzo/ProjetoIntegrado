@@ -78,7 +78,7 @@ def main() -> None:
         MonitorLive(args.url, cfg, banco).rodar()
     elif args.cmd == "painel":
         from . import painel
-        painel.servir(cfg, banco, args.host, args.porta)
+        painel.servir(cfg, banco, args.host, args.porta, args.config)
     elif args.cmd == "buscar":
         for a in fontes.descobrir(cfg):
             print(f"{'AO VIVO' if a['ao_vivo'] else 'gravado':8} {a['audiencia']:>9}  "

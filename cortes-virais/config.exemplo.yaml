@@ -26,10 +26,23 @@ cortes:
   cor_destaque: "#FFE000"
   gancho: true           # frase de impacto fixa no topo (escrita pela IA)
 
+  marca: ""              # nome do seu canal no canto do vídeo (ex.: @meucanal)
+
+edicao:
+  dinamica: true         # troca de plano e zoom ao longo do corte
+  abrir_no_rosto: true   # gameplay: começa no rosto do jogador
+  cortar_silencios: true # tira pausas longas de fala (não se aplica a gameplay)
+  pausa_minima: 1.2
+  abertura_pico: true    # a IA pode abrir com 1,5 s do ápice
+  barra_progresso: true
+
 ia:
   ativa: true
-  modelo: claude-opus-5-5
   nota_minima: 60        # 0–100; cortes abaixo disso são descartados
+  modelos:               # um modelo para cada papel
+    triagem: claude-haiku-5-5    # peneira rápida, só texto
+    ao_vivo: claude-sonnet-5-5   # avaliação de picos durante a live
+    final: claude-opus-5-5       # julgamento final, gancho e direção de edição
 
 live:
   limiar: 4.0            # menor = mais cortes (e mais falsos positivos)

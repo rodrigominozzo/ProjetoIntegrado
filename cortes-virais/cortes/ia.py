@@ -1,4 +1,9 @@
-"""Avaliação dos candidatos com Claude: nota de viralidade, título, descrição e hashtags."""
+"""Avaliação dos candidatos com Claude, com um modelo para cada papel:
+
+  triagem  (Haiku)  — lê só texto de muitos candidatos e descarta os fracos; rápido e barato
+  ao_vivo  (Sonnet) — avalia o pico de uma live com imagens; equilíbrio entre rapidez e critério
+  final    (Opus)   — julgamento criativo dos finalistas: nota, gancho, título e direção de edição
+"""
 from __future__ import annotations
 
 import base64
@@ -8,6 +13,8 @@ import os
 import re
 import subprocess
 from pathlib import Path
+
+from . import conhecimento
 
 log = logging.getLogger(__name__)
 
@@ -34,13 +41,29 @@ Escreva, no idioma pedido:
   seguir o canal). Um só: vários pedidos juntos fazem a pessoa ignorar todos.
 - hashtags: de 3 a 6, sem o '#', misturando o tema específico e o geral.
 
+Direção de edição (o programa monta o vídeo a partir destas três respostas):
+- momento_chave: em que segundo, contado do início atual do candidato, acontece o ápice
+  (a reação, a jogada, a frase de efeito). É ali que a edição fecha no rosto ou dá zoom.
+- abrir_com_pico: true quando os primeiros segundos são mornos mas o ápice é forte o
+  bastante para abrir o vídeo com 1,5 s dele antes de voltar ao começo. Use com parcimônia:
+  se o trecho já começa bem, ou se mostrar o ápice estraga a surpresa, deixe false.
+- palavras_chave: até 4 palavras da transcrição que carregam o sentido ou a emoção do
+  trecho, para destacar na legenda. Copie-as exatamente como aparecem.
+
 Use ajuste_inicio e ajuste_fim (em segundos; 0 para manter; negativos adiantam) para que o
 corte comece no gancho, sem enrolação antes, e termine logo depois do desfecho. Os limites
 de cada ajuste vêm indicados em cada candidato. Prefira começar tarde a começar cedo.
 
 Marque aprovado=false quando o trecho não tiver nada de interessante, ou quando publicá-lo
-puder prejudicar o canal: nudez, violência gráfica, discurso de ódio, exposição de dados
-pessoais, ou fala que fora de contexto distorce o que a pessoa quis dizer."""
+puder prejudicar o canal: nudez, violência gráfica real, discurso de ódio, exposição de
+dados pessoais, ou fala que fora de contexto distorce o que a pessoa quis dizer."""
+
+SISTEMA_TRIAGEM = """Você faz a primeira triagem de candidatos a corte de vídeo para Shorts e
+Reels, lendo apenas a transcrição e a reação do chat de cada um. Dê a cada candidato uma nota
+de 0 a 100 para a chance de render um corte que prenda a atenção sozinho, fora de contexto.
+Seja rápido e criterioso: uma etapa posterior, com imagens, fará o julgamento final dos
+melhores. Candidatos sem transcrição podem ser bons (a graça pode estar na imagem): nesses,
+guie-se pelo chat e pela pontuação dos sinais, e na dúvida dê nota intermediária."""
 
 CRITERIOS = ("gancho", "emocao", "clareza", "compartilhavel")
 
@@ -65,18 +88,30 @@ ESQUEMA = {
                     "descricao": {"type": "string"},
                     "hashtags": {"type": "array", "items": {"type": "string"}},
                     "motivo": {"type": "string"},
+                    "momento_chave": {"type": "number"},
+                    "abrir_com_pico": {"type": "boolean"},
+                    "palavras_chave": {"type": "array", "items": {"type": "string"}},
                     "ajuste_inicio": {"type": "number"},
                     "ajuste_fim": {"type": "number"},
                 },
                 "required": ["indice", "aprovado", "nota", "notas", "gancho_texto", "titulo",
-                             "descricao", "hashtags",
-                             "motivo", "ajuste_inicio", "ajuste_fim"],
+                             "descricao", "hashtags", "motivo", "momento_chave",
+                             "abrir_com_pico", "palavras_chave", "ajuste_inicio", "ajuste_fim"],
                 "additionalProperties": False,
             },
         }
     },
     "required": ["cortes"],
     "additionalProperties": False,
+}
+
+ESQUEMA_TRIAGEM = {
+    "type": "object",
+    "properties": {"notas": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"indice": {"type": "integer"}, "nota": {"type": "integer"}},
+        "required": ["indice", "nota"], "additionalProperties": False}}},
+    "required": ["notas"], "additionalProperties": False,
 }
 
 
@@ -108,28 +143,85 @@ def sem_ia(candidatos: list[dict], contexto: dict) -> list[dict]:
             **c, "aprovado": True, "nota": round(min(99.0, 50 + 25 * c.get("pontuacao", 0)), 1),
             "titulo": base[:70], "descricao": f"Momento {i + 1} de: {base}",
             "hashtags": ["shorts", "cortes", "viral"], "motivo": "sem IA: ordenado pelos sinais",
-            "gancho": "", "notas": {},
+            "gancho": "", "notas": {}, "momento": None, "abrir_com_pico": False,
+            "palavras_chave": [],
         })
     return resultado
 
 
+def _pedir(modelo: str, sistema: str, conteudo: list[dict], esquema: dict) -> dict | None:
+    """Uma chamada com saída estruturada. Devolve o JSON, ou None se não deu certo."""
+    import anthropic
+
+    extras = {}
+    if "haiku" not in modelo:
+        # Se o modelo recusar, a API reexecuta num modelo de reserva (o Haiku não tem isso).
+        extras = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
+    try:
+        resposta = anthropic.Anthropic().beta.messages.create(
+            model=modelo, max_tokens=16000, system=sistema,
+            messages=[{"role": "user", "content": conteudo}],
+            output_config={"format": {"type": "json_schema", "schema": esquema}},
+            **extras,
+        )
+    except anthropic.AuthenticationError:
+        log.error("ANTHROPIC_API_KEY inválida.")
+        return None
+    except anthropic.RateLimitError:
+        log.warning("Limite de uso da API atingido (%s).", modelo)
+        return None
+    except anthropic.APIStatusError as e:
+        log.warning("Erro da API em %s (%s): %s", modelo, e.status_code, e.message)
+        return None
+    except anthropic.APIConnectionError:
+        log.warning("Sem conexão com a API.")
+        return None
+    if resposta.stop_reason != "end_turn":
+        log.warning("Resposta incompleta de %s (%s).", modelo, resposta.stop_reason)
+        return None
+    return json.loads(next(b.text for b in resposta.content if b.type == "text"))
+
+
+def _cabecalho(contexto: dict, cfg: dict) -> str:
+    return (f"Vídeo: {contexto.get('titulo', '')}\nCanal: {contexto.get('canal', '')}\n"
+            f"Idioma dos textos: {cfg['idioma']}\n"
+            f"Origem: {'live em andamento' if contexto.get('ao_vivo') else 'vídeo gravado'}\n"
+            f"Duração permitida do corte: {cfg['cortes']['duracao_min']} a "
+            f"{cfg['cortes']['duracao_max']} segundos")
+
+
+def triar(candidatos: list[dict], contexto: dict, cfg: dict, manter: int) -> list[dict]:
+    """Primeira peneira com o modelo rápido, só com texto. Na dúvida ou em falha, mantém tudo."""
+    if len(candidatos) <= manter or not disponivel(cfg):
+        return candidatos
+    conteudo = [{"type": "text", "text": _cabecalho(contexto, cfg)}]
+    for i, c in enumerate(candidatos):
+        conteudo.append({"type": "text", "text": f"Candidato {i}: " + json.dumps({
+            "transcricao": c.get("transcricao") or "(sem transcrição)",
+            "chat": (c.get("chat") or [])[:12],
+            "pontuacao_sinais": round(c.get("pontuacao", 0), 2)}, ensure_ascii=False)})
+    dados = _pedir(cfg["ia"]["modelos"]["triagem"], SISTEMA_TRIAGEM, conteudo, ESQUEMA_TRIAGEM)
+    if not dados:
+        return candidatos
+    notas = {n["indice"]: n["nota"] for n in dados["notas"] if 0 <= n["indice"] < len(candidatos)}
+    ordem = sorted(range(len(candidatos)), key=lambda i: notas.get(i, 50), reverse=True)
+    return [candidatos[i] for i in sorted(ordem[:manter])]
+
+
 def avaliar(candidatos: list[dict], contexto: dict, video: str | Path, cfg: dict) -> list[dict]:
-    """Devolve os candidatos com nota e metadados. Cada candidato tem inicio, fim,
-    transcricao, chat (lista de mensagens) e pontuacao."""
+    """Devolve os candidatos com nota, metadados e direção de edição. Cada candidato tem
+    inicio, fim, transcricao, chat (lista de mensagens) e pontuacao."""
     if not candidatos:
         return []
     if not disponivel(cfg):
         return sem_ia(candidatos, contexto)
-    import anthropic
 
-    conteudo: list[dict] = [{
-        "type": "text",
-        "text": (f"Vídeo: {contexto.get('titulo', '')}\nCanal: {contexto.get('canal', '')}\n"
-                 f"Idioma dos textos: {cfg['idioma']}\n"
-                 f"Origem: {'live em andamento' if contexto.get('ao_vivo') else 'vídeo gravado'}\n"
-                 f"Duração permitida do corte: {cfg['cortes']['duracao_min']} a "
-                 f"{cfg['cortes']['duracao_max']} segundos"),
-    }]
+    conteudo: list[dict] = [{"type": "text", "text": _cabecalho(contexto, cfg)}]
+    textos = " ".join([contexto.get("titulo", ""), contexto.get("canal", "")]
+                      + [c.get("transcricao") or "" for c in candidatos])
+    base = conhecimento.selecionar(textos, cfg)
+    if base:
+        conteudo.append({"type": "text", "text": base})
     if contexto.get("referencias"):
         conteudo.append({"type": "text", "text": contexto["referencias"]})
     for i, c in enumerate(candidatos):
@@ -143,39 +235,16 @@ def avaliar(candidatos: list[dict], contexto: dict, video: str | Path, cfg: dict
             "transcricao": c.get("transcricao") or "(sem transcrição)",
             "chat": c.get("chat") or [],
             "pontuacao_sinais": round(c.get("pontuacao", 0), 2),
+            "duracao_atual": round(c["fim"] - c["inicio"], 1),
             "limites_ajuste_inicio": [-c.get("folga_inicio", 8), 5],
             "limites_ajuste_fim": [-5, c.get("folga_fim", 15)],
         }, ensure_ascii=False)})
 
-    cliente = anthropic.Anthropic()
-    try:
-        resposta = cliente.beta.messages.create(
-            model=cfg["ia"]["modelo"],
-            max_tokens=16000,
-            system=SISTEMA,
-            messages=[{"role": "user", "content": conteudo}],
-            output_config={"format": {"type": "json_schema", "schema": ESQUEMA}},
-            # Se o modelo principal recusar, a API reexecuta num modelo de reserva.
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-        )
-    except anthropic.AuthenticationError:
-        log.error("ANTHROPIC_API_KEY inválida; seguindo sem IA.")
+    papel = "ao_vivo" if contexto.get("ao_vivo") else "final"
+    dados = _pedir(cfg["ia"]["modelos"][papel], SISTEMA, conteudo, ESQUEMA)
+    if not dados:
+        log.warning("Seguindo sem IA neste vídeo.")
         return sem_ia(candidatos, contexto)
-    except anthropic.RateLimitError:
-        log.warning("Limite de uso da API atingido; seguindo sem IA neste vídeo.")
-        return sem_ia(candidatos, contexto)
-    except anthropic.APIStatusError as e:
-        log.warning("Erro da API (%s): %s; seguindo sem IA.", e.status_code, e.message)
-        return sem_ia(candidatos, contexto)
-    except anthropic.APIConnectionError:
-        log.warning("Sem conexão com a API; seguindo sem IA.")
-        return sem_ia(candidatos, contexto)
-
-    if resposta.stop_reason != "end_turn":
-        log.warning("Resposta incompleta da IA (%s); seguindo sem IA.", resposta.stop_reason)
-        return sem_ia(candidatos, contexto)
-    dados = json.loads(next(b.text for b in resposta.content if b.type == "text"))
     avaliados = []
     for item in dados["cortes"]:
         if not 0 <= item["indice"] < len(candidatos):
@@ -187,12 +256,16 @@ def avaliar(candidatos: list[dict], contexto: dict, video: str | Path, cfg: dict
         dur = (c["fim"] + af) - (c["inicio"] + ai)
         dur_ok = max(cfg["cortes"]["duracao_min"], min(cfg["cortes"]["duracao_max"], dur))
         af = min(af + (dur_ok - dur), float(c.get("folga_fim", 15)))
+        # momento_chave vem contado do início original; guarda como deslocamento no corte final.
+        momento = max(0.0, min(item["momento_chave"] - ai, dur_ok))
         c.update(
             aprovado=item["aprovado"], nota=float(max(0, min(100, item["nota"]))),
             titulo=item["titulo"].strip()[:90], descricao=item["descricao"].strip(),
             hashtags=[h.lstrip("#").replace(" ", "") for h in item["hashtags"]][:6],
             gancho=item["gancho_texto"].strip()[:60],
             notas={k: max(0, min(100, item["notas"][k])) for k in CRITERIOS},
+            momento=momento, abrir_com_pico=item["abrir_com_pico"],
+            palavras_chave=item["palavras_chave"][:4],
             motivo=item["motivo"], inicio=max(0.0, c["inicio"] + ai), fim=c["fim"] + af,
         )
         if "inicio_arquivo" in c:

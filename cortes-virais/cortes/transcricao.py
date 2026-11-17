@@ -108,7 +108,8 @@ def _cor_ass(hexa: str) -> str:
 
 def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: int, altura: int,
               credito: str = "", gancho: str = "", posicao: dict | None = None,
-              karaoke: bool = True, cor_destaque: str = "#FFE000") -> str:
+              karaoke: bool = True, cor_destaque: str = "#FFE000", marca: str = "",
+              palavras_chave: list[str] | None = None, cor_chave: str = "#3CFF7A") -> str:
     """Legendas no estilo de vídeos curtos: blocos de até 3 palavras, com a palavra falada
     em destaque (karaokê), gancho fixo no topo e crédito discreto no rodapé."""
     vertical = altura > largura
@@ -130,15 +131,21 @@ def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: i
         f"Style: Gancho,DejaVu Sans,{int(tamanho * 0.72)},&H00101010,&H00101010,&H00FFFFFF,"
         f"&H00FFFFFF,-1,0,0,0,100,100,0,0,3,14,0,8,70,70,{int(altura * posicao['gancho'])},1",
         f"Style: Credito,DejaVu Sans,{int(tamanho * 0.36)},&H40FFFFFF,&H00FFFFFF,&H00000000,"
-        f"&H80000000,0,0,0,0,100,100,0,0,1,3,1,2,40,40,{int(altura * 0.025)},1",
+        f"&H80000000,0,0,0,0,100,100,0,0,1,3,1,1,40,40,{int(altura * 0.025)},1",
+        f"Style: Marca,DejaVu Sans,{int(tamanho * 0.42)},&H30FFFFFF,&H00FFFFFF,&H00000000,"
+        f"&H80000000,-1,0,0,0,100,100,0,0,1,3,1,3,40,40,{int(altura * 0.025)},1",
         "", "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     if credito:
         linhas.append(f"Dialogue: 0,{_tempo(0)},{_tempo(duracao)},Credito,,0,0,0,,{_limpar(credito)}")
-    if gancho:
+    if marca:
+        linhas.append(f"Dialogue: 0,{_tempo(0)},{_tempo(duracao)},Marca,,0,0,0,,{_limpar(marca)}")
+    if gancho:  # entra com um leve "pop" para chamar o olhar no primeiro instante
         linhas.append(f"Dialogue: 2,{_tempo(0)},{_tempo(duracao)},Gancho,,0,0,0,,"
-                      f"{_limpar(gancho)}")
+                      f"{{\\fad(120,0)\\fscx85\\fscy85\\t(0,160,\\fscx100\\fscy100)}}{_limpar(gancho)}")
+    chaves = {_normal(k) for k in (palavras_chave or [])}
+    cor_k = _cor_ass(cor_chave)
     bloco: list[Palavra] = []
     blocos: list[list[Palavra]] = []
     for p in recorte(palavras, inicio, inicio + duracao):
@@ -156,7 +163,10 @@ def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: i
             fim = min(fim, blocos[i + 1][0][0] - inicio)
         if fim - a < 0.1:
             continue
-        termos = [_limpar(p[2]).upper() for p in b]
+        # Palavras-chave ficam sempre coloridas e um pouco maiores.
+        termos = [(f"{{\\c{cor_k}\\fscx112\\fscy112}}{_limpar(p[2]).upper()}"
+                   f"{{\\c&HFFFFFF&\\fscx100\\fscy100}}") if _normal(p[2]) in chaves
+                  else _limpar(p[2]).upper() for p in b]
         if not karaoke:
             linhas.append(f"Dialogue: 1,{_tempo(a)},{_tempo(fim)},Fala,,0,0,0,,{' '.join(termos)}")
             continue
@@ -165,10 +175,18 @@ def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: i
             t1 = fim if k + 1 == len(b) else b[k + 1][0] - inicio
             if t1 - t0 < 0.03:
                 continue
-            frase = " ".join(f"{{\\c{cor}}}{t}{{\\c&HFFFFFF&}}" if j == k else t
+            frase = " ".join(f"{{\\c{cor}}}{t}{{\\c&HFFFFFF&}}" if j == k and "{" not in t else t
                              for j, t in enumerate(termos))
+            if k == 0:  # cada bloco novo "salta" na tela
+                frase = "{\\fscx90\\fscy90\\t(0,90,\\fscx100\\fscy100)}" + frase
             linhas.append(f"Dialogue: 1,{_tempo(t0)},{_tempo(t1)},Fala,,0,0,0,,{frase}")
     return "\n".join(linhas) + "\n"
+
+
+def _normal(s: str) -> str:
+    import unicodedata
+    base = unicodedata.normalize("NFD", s.lower())
+    return "".join(c for c in base if c.isalnum() and not unicodedata.combining(c))
 
 
 def _limpar(s: str) -> str:

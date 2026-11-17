@@ -21,13 +21,17 @@ def finalizar(c: dict, video: Path, contexto: dict, cfg: dict, banco: Banco, pas
     canal = contexto.get("canal", "")
     creditar = cfg["publicar"]["creditar_fonte"] and canal
     saida = pasta / f"corte_{int(c['inicio']):06d}.mp4"
-    _, layout = render.renderizar(
-        video, ini, fim, saida, formato=cfg["cortes"]["formato"],
-        palavras=palavras if cfg["cortes"]["legendas"] else None,
+    momento = c.get("momento")
+    feito = render.renderizar(
+        video, ini, fim, saida, formato=cfg["cortes"]["formato"], palavras=palavras,
         credito=f"Créditos: {canal}" if creditar else "",
         gancho=c.get("gancho", "") if cfg["cortes"]["gancho"] else "",
-        karaoke=cfg["cortes"]["karaoke"], cor_destaque=cfg["cortes"]["cor_destaque"],
+        marca=cfg["cortes"]["marca"], palavras_chave=c.get("palavras_chave"),
+        momento=None if momento is None else ini + momento,
+        abrir_com_pico=bool(c.get("abrir_com_pico")),
+        cfg_cortes=cfg["cortes"], cfg_edicao=cfg["edicao"],
     )
+    layout = feito["layout"]
     descricao = c["descricao"]
     if creditar and contexto.get("url"):
         sep = "&" if "?" in contexto["url"] else "?"
@@ -124,7 +128,10 @@ def processar(alvo: str, cfg: dict, banco: Banco, *, chat_arquivo: str | None = 
             "chat": chat.trecho(mensagens, ini_aj, fim_aj + cfg["sinais"]["atraso_chat"]),
         })
 
-    # 3. IA dá nota, título e descrição; ficam os melhores aprovados.
+    # 3. Triagem rápida (texto) e depois o julgamento final (com imagens) dos melhores.
+    if ia.disponivel(cfg):
+        progresso("Triagem rápida dos candidatos")
+        candidatos = ia.triar(candidatos, meta, cfg, manter=cfg["cortes"]["por_video"] * 2)
     progresso("Avaliando com IA" if ia.disponivel(cfg) else "Ordenando pelos sinais")
     meta["referencias"] = desempenho.referencias(banco)
     avaliados = ia.avaliar(candidatos, meta, video, cfg)

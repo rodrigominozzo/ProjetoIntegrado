@@ -5,6 +5,7 @@ plano; a página consulta /api/estado a cada 2 segundos.
 """
 from __future__ import annotations
 
+import html
 import itertools
 import json
 import logging
@@ -14,9 +15,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import desempenho, enquadramento, fontes, ia, publicar, transcricao, vod
+from . import (ajustes, conhecimento, desempenho, enquadramento, fontes, ia, publicar,
+               transcricao, vod)
 from .banco import MAX_TENTATIVAS, Banco
 from .live import MonitorLive
 
@@ -25,8 +27,11 @@ PAGINA = Path(__file__).with_name("painel.html")
 
 
 class Gerenciador:
-    def __init__(self, cfg: dict, banco: Banco):
+    def __init__(self, cfg: dict, banco: Banco, caminho_cfg: str = "config.yaml",
+                 porta: int = 8000):
         self.cfg, self.banco = cfg, banco
+        self.caminho_cfg, self.porta = caminho_cfg, porta
+        self._fluxo_youtube = None
         self.tarefas: dict[str, dict] = {}
         self.lives: dict[str, MonitorLive] = {}
         self._trava = threading.RLock()
@@ -218,9 +223,76 @@ class Gerenciador:
             "intervalo_min": self.cfg["publicar"]["intervalo_min"],
         }
 
+    # --- configurações ---
+    def ajustes(self) -> dict:
+        cfg_yt = self.cfg["publicar"]["youtube"]
+        definidas = ajustes.chaves_definidas()
+        return {
+            "secoes": ajustes.descrever(self.cfg),
+            "chaves": [{"nome": n, "rotulo": r, "definida": definidas[n]}
+                       for n, r in ajustes.CHAVES.items()],
+            "youtube": {"tem_segredo": Path(cfg_yt["client_secret"]).exists(),
+                        "conectado": publicar.conectado("yt", self.cfg)},
+            "instagram": publicar.conectado("ig", self.cfg),
+            "ia": ia.disponivel(self.cfg), "rostos": enquadramento.disponivel(),
+            "whisper": transcricao.whisper_disponivel(),
+            "tem_cortes": bool(self.banco.todos_cortes()),
+            "bases": [{"nome": b["nome"], "conteudo": b["bruto"], "sempre": b["sempre"],
+                       "palavras": b["palavras"]} for b in conhecimento.listar(self.cfg)],
+        }
+
+    def youtube_iniciar(self) -> str:
+        """Começa a autorização do canal e devolve o endereço da tela do Google."""
+        import os
+
+        try:
+            from google_auth_oauthlib.flow import Flow
+        except ImportError:
+            raise ValueError("Instale as dependências: pip install -r requirements.txt") from None
+        from .publicar import youtube
+
+        cfg_yt = self.cfg["publicar"]["youtube"]
+        if not Path(cfg_yt["client_secret"]).exists():
+            raise ValueError("Cole primeiro o conteúdo do client_secret.json (passo 2).")
+        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  # o retorno é para este computador
+        os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+        self._fluxo_youtube = Flow.from_client_secrets_file(
+            cfg_yt["client_secret"], youtube.ESCOPOS,
+            redirect_uri=f"http://localhost:{self.porta}/oauth/youtube")
+        url, _ = self._fluxo_youtube.authorization_url(access_type="offline", prompt="consent")
+        return url
+
+    def youtube_concluir(self, codigo: str) -> None:
+        if not self._fluxo_youtube:
+            raise ValueError("A autorização expirou. Clique em Conectar de novo.")
+        self._fluxo_youtube.fetch_token(code=codigo)
+        Path(self.cfg["publicar"]["youtube"]["token"]).write_text(
+            self._fluxo_youtube.credentials.to_json())
+        self._fluxo_youtube = None
+
     # --- ações da página ---
     def acao(self, nome: str, d: dict) -> dict:
-        if nome == "enviar":
+        if nome == "ajustes/salvar":
+            ajustes.salvar(self.cfg, d.get("valores") or {}, self.caminho_cfg)
+        elif nome == "chave":
+            ajustes.definir_chave(d.get("nome", ""), d.get("valor", ""))
+        elif nome == "youtube/segredo":
+            try:
+                dados = json.loads(d.get("conteudo") or "")
+            except json.JSONDecodeError:
+                raise ValueError("Isso não é o conteúdo de um client_secret.json.") from None
+            if not isinstance(dados, dict) or not ({"installed", "web"} & set(dados)):
+                raise ValueError("Use uma credencial OAuth do tipo “App para computador”.")
+            destino = Path(self.cfg["publicar"]["youtube"]["client_secret"])
+            destino.write_text(json.dumps(dados))
+            destino.chmod(0o600)
+        elif nome == "youtube/conectar":
+            return {"ok": True, "url": self.youtube_iniciar()}
+        elif nome == "base/salvar":
+            conhecimento.salvar(self.cfg, d.get("nome", ""), d.get("conteudo", ""))
+        elif nome == "base/remover":
+            conhecimento.remover(self.cfg, d.get("nome", ""))
+        elif nome == "enviar":
             self.enviar(d.get("alvo", ""), bool(d.get("teste")), bool(d.get("como_live")))
         elif nome == "live/parar":
             self.parar_live(d["id"])
@@ -326,6 +398,26 @@ def _manipulador(ger: Gerenciador):
                 return self._arquivo(PAGINA, "text/html; charset=utf-8")
             if rota == "/api/estado":
                 return self._json(ger.estado())
+            if rota == "/api/ajustes":
+                return self._json(ger.ajustes())
+            if rota == "/oauth/youtube":
+                consulta = parse_qs(urlsplit(self.path).query)
+                try:
+                    if "code" not in consulta:
+                        raise ValueError(consulta.get("error", ["Autorização cancelada."])[0])
+                    ger.youtube_concluir(consulta["code"][0])
+                    texto = "Canal do YouTube conectado. Pode fechar esta aba e voltar ao painel."
+                except Exception as e:  # noqa: BLE001
+                    texto = f"Não foi possível conectar: {_resumo(e)}"
+                corpo = (f"<!doctype html><meta charset=utf-8><title>Cortes Virais</title>"
+                         f"<body style='font:18px system-ui;padding:40px'>{html.escape(texto)}</body>"
+                         ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(corpo)))
+                self.end_headers()
+                self.wfile.write(corpo)
+                return
             m = re.fullmatch(r"/midia/(\d+)", rota)
             if m:
                 corte = ger.banco.corte(int(m[1]))
@@ -355,7 +447,8 @@ def _manipulador(ger: Gerenciador):
     return Manipulador
 
 
-def servir(cfg: dict, banco: Banco, host: str = "127.0.0.1", porta: int = 8000) -> None:
+def servir(cfg: dict, banco: Banco, host: str = "127.0.0.1", porta: int = 8000,
+           caminho_cfg: str = "config.yaml") -> None:
     class Servidor(ThreadingHTTPServer):
         daemon_threads = True
 
@@ -364,7 +457,7 @@ def servir(cfg: dict, banco: Banco, host: str = "127.0.0.1", porta: int = 8000) 
             if not isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError)):
                 super().handle_error(request, client_address)  # navegador fechando conexão é normal
 
-    servidor = Servidor((host, porta), _manipulador(Gerenciador(cfg, banco)))
+    servidor = Servidor((host, porta), _manipulador(Gerenciador(cfg, banco, caminho_cfg, porta)))
     log.info("Painel em http://%s:%d", "localhost" if host in {"127.0.0.1", "0.0.0.0"} else host,
              servidor.server_address[1])
     try:

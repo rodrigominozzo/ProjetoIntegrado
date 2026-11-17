@@ -26,6 +26,36 @@ detector compara chat e volume com os últimos minutos; num pico, recorta
 **Vídeo gravado:** analisa o vídeo inteiro, gera o triplo de candidatos necessários
 e fica com os de melhor nota.
 
+### Um modelo de IA para cada papel
+
+| Papel | Modelo padrão | Por quê |
+|---|---|---|
+| Triagem dos candidatos | Haiku 5.5 | Lê só texto de até 15 trechos e descarta os fracos. Tarefa simples e volumosa. |
+| Avaliação durante a live | Sonnet 5.5 | Precisa decidir em segundos, com imagens, para publicar antes dos outros. |
+| Julgamento final (vídeo gravado) | Opus 5.5 | Dá as notas, escreve o gancho e dirige a edição. É onde a qualidade se decide. |
+
+Os três são trocáveis na aba Configurações.
+
+### Edição dinâmica
+
+O corte não fica num plano só. A partir do layout da cena e do momento-chave (indicado
+pela IA, ou o pico de volume), o sistema monta uma sequência de planos:
+
+- **Gameplay com facecam:** abre 1,5 s no rosto do jogador, alterna tela dividida e jogo
+  em tela cheia, e volta ao rosto na reação.
+- **Uma pessoa falando:** cortes com zoom a cada poucos segundos, mais fechado no
+  momento-chave; pausas longas de fala são removidas.
+- **Abertura pelo ápice:** quando o começo é morno, a IA pode abrir com 1,5 s do melhor
+  momento antes de voltar ao início.
+- **Acabamento:** gancho com entrada animada, legenda karaokê com palavras-chave em
+  destaque, barra de progresso, nome do canal no canto.
+
+### Bases de conhecimento
+
+Arquivos `.md` na pasta `conhecimento/`, editáveis na aba Configurações. A IA recebe uma
+base quando o título, o canal ou a transcrição contém uma das palavras do cabeçalho.
+Já vêm duas: `tecnicas-de-cortes` (sempre ativa) e `gta-vi`.
+
 ### Enquadramento automático (`formato: auto`)
 
 | Cena detectada | Layout |
@@ -73,6 +103,7 @@ Cole o link de um vídeo ou de uma live no topo; o sistema identifica o tipo soz
 | **Análises** | Vídeos gravados em processamento, com etapa e progresso. Ao terminar, "Ver análise" mostra a linha do tempo com todos os trechos considerados, a nota e o motivo de cada um. |
 | **Cortes** | Os cortes prontos, agrupados pelo vídeo ou live de origem, com player. |
 | **Publicações** | Situação das contas, limite diário e a fila: o que saiu, o que falhou (com o erro) e botões para publicar ou tentar de novo. |
+| **Configurações** | Passo a passo para ligar a IA e conectar YouTube e Instagram, todas as opções com explicação, escolha dos modelos e editor das bases de conhecimento. |
 | **Canais** | Canais dos links que você enviou, tratados como confiáveis. Ligue "Acompanhar automaticamente" para cortar as lives e vídeos novos deles sem enviar link. |
 
 **Modo teste:** com a chave ligada, o vídeo ou a live é processado normalmente, mas os
