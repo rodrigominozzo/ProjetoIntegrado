@@ -103,7 +103,7 @@ def montar(video: Path, escolhidos: list[dict], meta: dict, cfg: dict, banco: Ba
         partes += [cartao, trecho]
 
     lista = trabalho / "lista.txt"
-    lista.write_text("".join(f"file '{p.name}'\n" for p in partes))
+    lista.write_text("".join(f"file '{p.name}'\n" for p in partes), encoding="utf-8")
     saida = pasta / "compilacao.mp4"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", lista.name,
                     "-c", "copy", "-movflags", "+faststart", str(saida.resolve())],

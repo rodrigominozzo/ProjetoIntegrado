@@ -24,7 +24,8 @@ if ($LASTEXITCODE -ge 8) { throw "Falha ao copiar os arquivos para $destino." }
 Write-Host "3/4  Instalando (leva alguns minutos)..." -ForegroundColor Cyan
 Set-Location $destino
 $env:CORTES_SEM_PAUSA = "1"
-cmd /c instalar.bat
+# Caminho completo: com NoDefaultCurrentDirectoryInExePath ligado o cmd nao procura na pasta atual.
+cmd /c "`"$(Join-Path $destino 'instalar.bat')`""
 if ($LASTEXITCODE -ne 0) { throw "A instalacao nao terminou. Veja a mensagem acima." }
 
 Write-Host "4/4  Criando o atalho..." -ForegroundColor Cyan

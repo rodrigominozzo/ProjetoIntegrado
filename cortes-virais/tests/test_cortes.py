@@ -287,7 +287,7 @@ def test_ajustes_validam_e_gravam(tmp_path):
     ajustes.salvar(cfg, {"cortes.duracao": "35", "ia.modelos.triagem": "claude-haiku-5-5",
                          "edicao.dinamica": False, "live.limiar": "4,5"}, arq)
     assert cfg["cortes"]["duracao"] == 35 and cfg["edicao"]["dinamica"] is False
-    assert yaml.safe_load(arq.read_text())["live"]["limiar"] == 4.5
+    assert yaml.safe_load(arq.read_text(encoding="utf-8"))["live"]["limiar"] == 4.5
     with pytest.raises(ValueError, match="entre"):
         ajustes.salvar(cfg, {"ia.nota_minima": 500}, arq)
     with pytest.raises(ValueError, match="mínima"):
@@ -313,7 +313,7 @@ def test_narracao_de_abertura(video, tmp_path):
                     "volume": 1.0, "fundo": 0.2, "t": None}],
         encerramento={"arquivo": voz, "duracao": 2.0, "texto": "E você, faria igual?"},
         cfg_cortes=cfg["cortes"], cfg_edicao=cfg["edicao"])
-    ass = (tmp_path / "c.ass").read_text()
+    ass = (tmp_path / "c.ass").read_text(encoding="utf-8")
     assert "CONTEXTO DITO PELO" in ass
     assert "P0" not in ass and "P3" not in ass and "P6" in ass    # falas cobertas saem da legenda
 
@@ -380,7 +380,7 @@ def test_capa_tema_e_area_segura(video, tmp_path):
     dims = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height",
                            "-of", "csv=p=0", corte["capa"]], capture_output=True, text=True).stdout
     assert dims.strip() == "1080,1920"
-    ass = (tmp_path / "v" / "corte_000060.ass").read_text()
+    ass = (tmp_path / "v" / "corte_000060.ass").read_text(encoding="utf-8")
     assert "@GamePlayCortesBR   ·   Créditos: Canal X" in ass          # assinatura no topo
     assert "&H2B22E8" in ass                                           # caixa vermelha do tema
     estilo = next(l for l in ass.splitlines() if l.startswith("Style: Fala"))

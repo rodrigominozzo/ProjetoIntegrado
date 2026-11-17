@@ -88,7 +88,7 @@ class MonitorLive:
             return
         bruto = self.pasta / f"bruto_{int(a)}.ts"
         lista = self.pasta / f"lista_{int(a)}.txt"
-        lista.write_text("".join(f"file '{arq.resolve()}'\n" for _, arq in usados))
+        lista.write_text("".join(f"file '{arq.resolve()}'\n" for _, arq in usados), encoding="utf-8")
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i",
                         str(lista), "-c", "copy", str(bruto)], check=True)
         lista.unlink()

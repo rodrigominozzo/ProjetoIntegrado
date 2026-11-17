@@ -19,6 +19,8 @@ echo Usando: %PY%
 .venv\Scripts\pip install -r requirements.txt || (echo A instalacao falhou. Veja a mensagem acima. & (if not defined CORTES_SEM_PAUSA pause) & exit /b 1)
 rem Opcionais: se algum falhar, o programa funciona sem ele.
 for %%p in (pywebview chat-downloader faster-whisper piper-tts) do .venv\Scripts\pip install %%p || echo Aviso: %%p nao foi instalado ^(opcional^).
+rem O PyAV 19 removeu um parametro que o faster-whisper 1.2 usa: segura na 18.
+.venv\Scripts\pip install "av<19" || echo Aviso: nao consegui ajustar o PyAV ^(legendas pelo Whisper podem falhar^).
 .venv\Scripts\python -m piper.download_voices pt_BR-faber-medium --download-dir vozes || echo Aviso: a voz da narracao nao foi baixada. Instale depois pela aba Configuracoes.
 if not exist config.yaml copy config.exemplo.yaml config.yaml >nul
 if not exist .env copy .env.exemplo .env >nul

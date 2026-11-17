@@ -15,6 +15,8 @@ done
 for pacote in pywebview chat-downloader faster-whisper piper-tts; do
   .venv/bin/pip install "$pacote" || echo "Aviso: $pacote não foi instalado (opcional)."
 done
+# O PyAV 19 removeu um parâmetro que o faster-whisper 1.2 usa: segura na 18.
+.venv/bin/pip install "av<19" || echo "Aviso: não consegui ajustar o PyAV (legendas pelo Whisper podem falhar)."
 .venv/bin/python -m piper.download_voices pt_BR-faber-medium --download-dir vozes || echo "Aviso: a voz da narração não foi baixada; instale depois pela aba Configurações."
 [ -f config.yaml ] || cp config.exemplo.yaml config.yaml
 [ -f .env ] || cp .env.exemplo .env

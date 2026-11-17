@@ -60,15 +60,29 @@ def transcrever(video: str | Path, inicio: float, duracao: float, idioma: str,
         return []
     from faster_whisper import WhisperModel
 
-    with _trava_whisper, tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
+    # Pasta temporária em vez de NamedTemporaryFile: no Windows o arquivo aberto bloqueia o ffmpeg.
+    with _trava_whisper, tempfile.TemporaryDirectory() as pasta:
+        wav = str(Path(pasta) / "trecho.wav")
         if _whisper is None:
             _whisper = WhisperModel(modelo, device="auto", compute_type="int8")
         subprocess.run(
             ["ffmpeg", "-v", "error", "-y", "-ss", f"{inicio:.2f}", "-t", f"{duracao:.2f}",
-             "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", tmp.name], check=True)
-        segmentos, _ = _whisper.transcribe(tmp.name, language=idioma, word_timestamps=True)
-        return [(inicio + w.start, inicio + w.end, w.word.strip())
-                for s in segmentos for w in (s.words or [])]
+             "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", wav], check=True)
+        try:
+            return _palavras(_whisper, wav, idioma, inicio)
+        except RuntimeError as erro:
+            # Placa NVIDIA sem as bibliotecas CUDA (cuBLAS/cuDNN): segue na CPU.
+            if not any(t in str(erro).lower() for t in ("cuda", "cublas", "cudnn")):
+                raise
+            log.warning("GPU indisponível para o Whisper (%s); usando a CPU.", erro)
+            _whisper = WhisperModel(modelo, device="cpu", compute_type="int8")
+            return _palavras(_whisper, wav, idioma, inicio)
+
+
+def _palavras(modelo, wav: str, idioma: str, inicio: float) -> list[Palavra]:
+    segmentos, _ = modelo.transcribe(wav, language=idioma, word_timestamps=True)
+    return [(inicio + w.start, inicio + w.end, w.word.strip())
+            for s in segmentos for w in (s.words or [])]
 
 
 def recorte(palavras: list[Palavra], inicio: float, fim: float) -> list[Palavra]:
