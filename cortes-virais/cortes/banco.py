@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS opcoes (chave TEXT PRIMARY KEY, valor TEXT);
 MIGRACOES = ["teste INTEGER DEFAULT 0", "yt_link TEXT", "ig_link TEXT", "gancho TEXT",
              "notas TEXT", "layout TEXT", "yt_vistas INTEGER", "yt_curtidas INTEGER",
              "ig_vistas INTEGER", "ig_curtidas INTEGER", "narracao TEXT"]
+# Campanha paga por visualização e comprovante de autorização, por canal.
+MIGRACOES_CANAIS = ["valor_mil REAL DEFAULT 0", "texto_obrigatorio TEXT DEFAULT ''",
+                    "autorizacao TEXT DEFAULT ''"]
 MAX_TENTATIVAS = 3
 
 
@@ -38,11 +41,12 @@ class Banco:
         self._trava = threading.Lock()
         with self._trava:
             self._con.executescript(ESQUEMA)
-            for coluna in MIGRACOES:
-                try:
-                    self._con.execute(f"ALTER TABLE cortes ADD COLUMN {coluna}")
-                except sqlite3.OperationalError:
-                    pass  # já existe
+            for tabela, colunas in (("cortes", MIGRACOES), ("canais", MIGRACOES_CANAIS)):
+                for coluna in colunas:
+                    try:
+                        self._con.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna}")
+                    except sqlite3.OperationalError:
+                        pass  # já existe
 
     def _exec(self, sql: str, args=()):
         with self._trava:
@@ -84,6 +88,8 @@ class Banco:
         return self._linhas(
             f"SELECT * FROM cortes WHERE teste=0 AND {plataforma}_id IS NULL"
             f" AND {plataforma}_tentativas < ?"
+            # compilações são vídeos longos horizontais: só no YouTube
+            + (" AND origem != 'compilacao'" if plataforma == "ig" else "") +
             " ORDER BY urgente DESC, nota DESC, id",
             (MAX_TENTATIVAS,),
         )
@@ -151,6 +157,31 @@ class Banco:
             self._exec("INSERT INTO canais (id, nome, criado) VALUES (?,?,?)"
                        " ON CONFLICT(id) DO UPDATE SET nome=excluded.nome",
                        (canal_id, nome, time.time()))
+
+    def canal(self, canal_id: str):
+        linhas = self._linhas("SELECT * FROM canais WHERE id=?", (canal_id or "",))
+        return linhas[0] if linhas else None
+
+    def campanha(self, canal_id: str, valor_mil: float, texto: str, autorizacao: str) -> None:
+        self._exec("UPDATE canais SET valor_mil=?, texto_obrigatorio=?, autorizacao=? WHERE id=?",
+                   (valor_mil, texto.strip(), autorizacao.strip(), canal_id))
+
+    def vistas_por_canal(self) -> dict[str, int]:
+        """Visualizações medidas (YouTube + Instagram) dos cortes de cada canal de origem."""
+        linhas = self._linhas(
+            "SELECT v.canal canal, SUM(COALESCE(c.yt_vistas,0)+COALESCE(c.ig_vistas,0)) n"
+            " FROM cortes c JOIN videos v ON v.id=c.video_id GROUP BY v.canal")
+        return {l["canal"]: l["n"] or 0 for l in linhas}
+
+    def resumo_monetizacao(self) -> dict:
+        desde = time.time() - 90 * 86400
+        l = self._linhas(
+            "SELECT COALESCE(SUM(CASE WHEN origem!='compilacao' AND yt_em>=? THEN yt_vistas END),0) curtas,"
+            " COUNT(CASE WHEN teste=0 THEN 1 END) total,"
+            " COUNT(CASE WHEN teste=0 AND narracao!='' AND narracao IS NOT NULL THEN 1 END) narrados,"
+            " COUNT(CASE WHEN teste=0 AND origem='compilacao' THEN 1 END) compilacoes FROM cortes",
+            (desde,))[0]
+        return dict(l)
 
     def canais(self) -> list[sqlite3.Row]:
         return self._linhas("SELECT * FROM canais ORDER BY nome")

@@ -116,7 +116,7 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cortes { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
 .corte { background: var(--painel); border: 1px solid var(--borda); border-radius: var(--raio);
          overflow: hidden; display: flex; flex-direction: column; }
-.corte video { width: 100%; aspect-ratio: 9/16; background: #000; display: block; }
+.corte video { width: 100%; aspect-ratio: 9/16; background: #000; display: block; object-fit: contain; }
 .corte .sem-arquivo { aspect-ratio: 9/16; display: grid; place-items: center; background: var(--painel2);
          color: var(--fraco); font-size: 13px; }
 .corte .corpo { padding: 12px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
@@ -189,6 +189,7 @@ textarea { min-height: 220px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo
     <button data-aba="cortes">Cortes <span class="conta" id="n-cortes">0</span></button>
     <button data-aba="publicacoes">Publicações <span class="conta" id="n-fila">0</span></button>
     <button data-aba="canais">Canais <span class="conta" id="n-canais">0</span></button>
+    <button data-aba="monetizacao">Monetização</button>
     <button data-aba="config">Configurações</button>
   </nav>
 
@@ -203,6 +204,7 @@ textarea { min-height: 220px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo
     </table></div><div id="fila-vazia"></div></div>
   </section>
   <section class="aba" id="aba-canais"><div id="lista-canais"></div></section>
+  <section class="aba" id="aba-monetizacao"><div id="monetizacao"><div class="sub">Carregando…</div></div></section>
   <section class="aba" id="aba-config"><div id="config"><div class="sub">Carregando…</div></div></section>
 </div>
 <div id="avisos"></div>
@@ -360,6 +362,7 @@ function criterios(n) {
 }
 const vistas = p => p.vistas == null ? "" : ` · ${Number(p.vistas).toLocaleString("pt-BR")} visualizações`;
 function seloPlataforma(nome, p) {
+  if (p.situacao === "não se aplica") return "";
   const tipo = {publicado: "ok", "na fila": "info", falhou: "erro", teste: ""}[p.situacao];
   const texto = p.situacao === "teste" ? "não enviado" : p.situacao;
   return `<span class="selo ${tipo}" title="${e(p.erro)}">${nome}: ${texto}${vistas(p)}</span>`;
@@ -383,6 +386,7 @@ function cartaoCorte(c) {
 function grupoCortes(g) {
   return `<div class="linha"><h2>${e(g.titulo)}</h2>
       <span class="selo">${g.origem === "live" ? "Live" : "Vídeo"}</span>
+      ${g.cortes.some(c => c.origem === "compilacao") ? '<span class="selo ok">com compilação</span>' : ""}
       <span class="sub">${e(g.canal)}${g.canal ? " · " : ""}${g.cortes.length} ${g.cortes.length === 1 ? "corte" : "cortes"}</span>
       <span class="espaco"></span>${g.origem === "live" ? "" : botaoAnalise(g.video_id)}</div>
     ${abertas.has(g.video_id) ? painelAnalise(g.video_id) + '<div style="height:12px"></div>' : ""}
@@ -402,6 +406,7 @@ function celula(c, p, conta) {
   const s = c[p];
   if (s.situacao === "publicado")
     return `<div class="celula"><span class="selo ok">Publicado</span><span class="sub">${ha(s.quando)}${vistas(s)}${s.link ? ` · <a href="${e(s.link)}" target="_blank" rel="noopener">abrir</a>` : ""}</span></div>`;
+  if (s.situacao === "não se aplica") return `<div class="celula"><span class="sub">Só no YouTube</span></div>`;
   const pode = conta.ativo && conta.conectado && c.existe;
   const botao = pode ? `<button class="btn mini" data-acao="corte/publicar" data-id="${c.id}" data-plataforma="${p}" data-ok="Publicação iniciada.">${s.situacao === "falhou" ? "Tentar de novo" : "Publicar agora"}</button>` : "";
   const selo = s.situacao === "falhou" ? '<span class="selo erro">Falhou</span>'
@@ -415,7 +420,77 @@ const linhaFila = c => `<td><b>${e(c.titulo)}</b><div class="sub">${e(c.video)}$
 const linhaCanal = c => `<div class="linha"><div><h3>${e(c.nome || c.id)}</h3>
     <a class="sub" href="https://www.youtube.com/channel/${e(c.id)}" target="_blank" rel="noopener">abrir canal</a></div><span class="espaco"></span>
     <label class="chave verde"><input type="checkbox" data-seguir="${e(c.id)}" ${c.seguir ? "checked" : ""}> Acompanhar automaticamente</label>
-    <button class="btn mini perigo" data-acao="canal/remover" data-id="${e(c.id)}" data-confirmar="Remover este canal da lista?">Remover</button></div>`;
+    <button class="btn mini perigo" data-acao="canal/remover" data-id="${e(c.id)}" data-confirmar="Remover este canal da lista?">Remover</button></div>
+  <details ${c.valor_mil || c.texto_obrigatorio || c.autorizacao ? "open" : ""}><summary>Campanha paga e autorização</summary>
+    <div class="campo"><label>Valor por mil visualizações</label><div class="sub">Quanto a campanha deste canal paga a cada 1.000 visualizações. Deixe 0 se não há campanha.</div>
+      <div class="entrada"><input type="number" min="0" step="0.05" data-campanha="valor_mil" value="${e(c.valor_mil || 0)}"></div></div>
+    <div class="campo"><label>Texto obrigatório na descrição</label><div class="sub">Hashtag, menção ou link que a campanha exige. Entra sozinho em todo corte deste canal.</div>
+      <div class="entrada"><input type="text" data-campanha="texto_obrigatorio" value="${e(c.texto_obrigatorio || "")}"></div></div>
+    <div class="campo"><label>Comprovante de autorização</label><div class="sub">Link ou anotação de onde o canal autorizou os cortes. É o que você mostra se houver reivindicação ou na análise de monetização.</div>
+      <div class="entrada"><input type="text" data-campanha="autorizacao" value="${e(c.autorizacao || "")}"></div></div>
+    <button class="btn mini" data-salvar-campanha="${e(c.id)}">Salvar</button></details>`;
+
+// ---------- monetização ----------
+const numero = n => Number(n || 0).toLocaleString("pt-BR");
+function meta(rotulo, atual, alvo) {
+  const pct = Math.min(100, alvo ? atual / alvo * 100 : 0);
+  return `<div style="margin-top:10px"><div class="linha"><b>${rotulo}</b><span class="espaco"></span><span class="sub">${numero(atual)} de ${numero(alvo)}</span></div>
+    <div class="barra" style="margin:6px 0 0"><i style="width:${pct}%;background:${pct >= 100 ? "var(--ok)" : "var(--marca)"}"></i></div></div>`;
+}
+function caminho(n, titulo, situacao, tipo, texto) {
+  return `<div class="passo"><span class="num">${n}</span><div><b>${titulo}</b> <span class="selo ${tipo}">${situacao}</span><div class="sub" style="margin-top:4px">${texto}</div></div></div>`;
+}
+async function carregarMonetizacao() {
+  let m;
+  try { m = await (await fetch("/api/monetizacao")).json(); } catch (err) { return; }
+  const r = m.resumo, comCampanha = m.campanhas.filter(c => c.valor_mil > 0);
+  const total = comCampanha.reduce((s, c) => s + c.ganho, 0);
+  const pctNarrado = r.total ? Math.round(r.narrados / r.total * 100) : 0;
+  const inscritos = m.canal ? m.canal.inscritos : 0;
+  $("#monetizacao").innerHTML = `
+  <div class="cartao secao-config"><h2>Caminhos de receita</h2>
+    <div class="sub" style="margin-bottom:6px">Do mais realista para o mais difícil em um canal só de cortes.</div>
+    ${caminho(1, "Campanhas que pagam por visualização", comCampanha.length ? `${comCampanha.length} ativa${comCampanha.length > 1 ? "s" : ""}` : "Nenhuma cadastrada", comCampanha.length ? "ok" : "alerta",
+      "Streamers e marcas pagam quem publica cortes deles, em geral em torno de US$ 1 a cada mil visualizações, sem exigir número de inscritos. As campanhas ficam em mercados como o Whop Content Rewards e em servidores de Discord dos próprios streamers. Entre numa, cadastre o valor e o texto exigido na aba Canais, e o sistema aplica as exigências e estima os ganhos.")}
+    ${caminho(2, "Acordo direto com o criador", "Fora do sistema", "",
+      "Canal oficial de cortes com divisão de receita, ou pagamento fixo. É o arranjo mais estável: o criador pode liberar a monetização do seu canal no YouTube para o conteúdo dele. Guarde o acordo no campo “Comprovante de autorização” do canal.")}
+    ${caminho(3, "Anúncios do YouTube (Programa de Parcerias)", m.narracao ? "Narração ligada" : "Narração desligada", m.narracao ? "ok" : "alerta",
+      "É o mais difícil: o YouTube nega canais de “conteúdo reutilizado” mesmo com autorização do dono. O que conta é contribuição própria perceptível. O sistema ajuda com narração em vários pontos do corte, pergunta final e a compilação “Top N” narrada. Peça a análise só quando a maioria dos vídeos recentes tiver narração.")}
+    ${caminho(4, "Instagram", "Limitado", "",
+      "O Instagram reduz o alcance de contas que só republicam e não paga bônus por conteúdo de terceiros. Use para ganhar público e para campanhas que aceitam Reels.")}
+  </div>
+  <div class="cartao secao-config"><h2>Ganhos estimados das campanhas</h2>
+    <div class="sub">Visualizações medidas dos seus cortes × valor por mil. O pagamento real depende da aprovação de cada campanha.</div>
+    ${comCampanha.length ? `<div class="rolagem"><table><thead><tr><th>Canal</th><th>Valor por mil</th><th>Visualizações</th><th>Estimativa</th><th>Pendências</th></tr></thead><tbody>
+      ${comCampanha.map(c => `<tr><td><b>${e(c.nome)}</b></td><td class="num">${e(m.moeda)} ${c.valor_mil.toLocaleString("pt-BR", {minimumFractionDigits: 2})}</td><td class="num">${numero(c.vistas)}</td><td class="num"><b>${e(m.moeda)} ${c.ganho.toLocaleString("pt-BR", {minimumFractionDigits: 2})}</b></td>
+        <td>${[c.tem_texto ? "" : "texto obrigatório", c.tem_autorizacao ? "" : "comprovante"].filter(Boolean).join(", ") || "—"}</td></tr>`).join("")}
+      </tbody></table></div><div style="margin-top:10px"><b class="grande" style="font-size:22px">${e(m.moeda)} ${total.toLocaleString("pt-BR", {minimumFractionDigits: 2})}</b> <span class="sub">no total</span></div>`
+      : `<div class="sub" style="padding:18px 0">Nenhuma campanha cadastrada. Na aba Canais, abra “Campanha paga e autorização” no canal e informe o valor por mil visualizações.</div>`}
+  </div>
+  <div class="cartao secao-config"><h2>Programa de Parcerias do YouTube</h2>
+    <div class="sub">${m.canal ? `Canal conectado: <b>${e(m.canal.nome)}</b>` : "Conecte o canal na aba Configurações para ver os inscritos."} As visualizações contam só os Shorts publicados por este sistema nos últimos 90 dias.</div>
+    <div style="margin-top:12px"><b>Anúncios</b></div>
+    ${meta("Inscritos", inscritos, 1000)}${meta("Visualizações de Shorts em 90 dias", r.curtas, 10000000)}
+    <div style="margin-top:16px"><b>Apoio dos fãs (nível inicial)</b></div>
+    ${meta("Inscritos", inscritos, 500)}${meta("Visualizações de Shorts em 90 dias", r.curtas, 3000000)}
+    <div class="sub" style="margin-top:12px">A partir de 1º de fevereiro de 2027 o YouTube aumenta essas metas para quem ainda não entrou no programa. Atingir a meta só permite pedir a análise; a aprovação depende da originalidade abaixo.</div>
+  </div>
+  <div class="cartao secao-config"><h2>Originalidade do canal</h2>
+    <div class="sub">O que um avaliador do YouTube veria ao abrir seus vídeos recentes.</div>
+    ${meta("Cortes com narração do canal (%)", pctNarrado, 100)}
+    <div class="linha" style="margin-top:12px"><span class="selo ${m.narracao ? "ok" : "alerta"}">Narração ${m.narracao ? "ligada" : "desligada"}</span>
+      <span class="selo ${m.compilacao ? "ok" : "alerta"}">Compilação narrada ${m.compilacao ? "ligada" : "desligada"}</span>
+      <span class="selo">${r.compilacoes} ${r.compilacoes === 1 ? "compilação publicável" : "compilações publicáveis"}</span></div>
+    <div class="sub" style="margin-top:10px">Meta prática: narração na grande maioria dos cortes e uma compilação por vídeo analisado. Cortes sem narração continuam úteis para campanhas pagas, que não exigem originalidade.</div>
+  </div>`;
+}
+document.addEventListener("click", ev => {
+  const id = ev.target.dataset.salvarCampanha;
+  if (!id) return;
+  const cartao = ev.target.closest("details"), dados = {id};
+  cartao.querySelectorAll("[data-campanha]").forEach(el => dados[el.dataset.campanha] = el.value);
+  acao("canal/campanha", dados, "Campanha salva.");
+});
 
 // ---------- configurações ----------
 let ajustes = null;
@@ -476,7 +551,7 @@ function desenharConfig() {
       <li>Acompanhe na aba Análises. Ao terminar, “Ver análise” mostra cada trecho considerado e por quê.</li>
       <li>Assista aos cortes na aba Cortes. Gostou de um? “Aprovar e publicar”.</li>
       <li>Se vieram cortes demais ou fracos, suba a “Nota mínima”; se vieram de menos, baixe.</li></ol>`, primeiro === 4)}
-    <div class="sub" style="margin-top:10px">Recursos opcionais: enquadramento que segue rostos ${a.rostos ? "✓ instalado" : "— instale com <code>pip install \"opencv-python-headless&lt;5\"</code>"} · legendas automáticas ${a.whisper ? "✓ instaladas" : "— instale com <code>pip install faster-whisper</code>"} · chat de lives — <code>pip install chat-downloader</code> · narração ${a.voz.instalada && a.voz.arquivo ? "✓ voz instalada" : "— <code>pip install piper-tts</code> e depois <code>python -m piper.download_voices pt_BR-faber-medium --download-dir vozes</code>"}.</div>
+    <div class="sub" style="margin-top:10px">Recursos opcionais: enquadramento que segue rostos ${a.rostos ? "✓ instalado" : "— instale com <code>pip install \"opencv-python-headless&lt;5\"</code>"} · legendas automáticas ${a.whisper ? "✓ instaladas" : "— instale com <code>pip install faster-whisper</code>"} · chat de lives — <code>pip install chat-downloader</code> · narração ${a.voz.instalada && a.voz.arquivo ? "✓ voz instalada" : a.voz.estado === "rodando" ? "— " + e(a.voz.mensagem) : `— <button class="btn mini" id="instalar-voz">Instalar a voz agora</button>`}${a.voz.estado === "erro" ? `<div class="msg-erro">${e(a.voz.mensagem)}</div>` : ""}.</div>
   </div>`;
   const secoes = a.secoes.map(s => `<div class="cartao secao-config"><h2>${e(s.titulo)}</h2><div class="sub" style="margin-bottom:6px">${e(s.descricao)}</div>
     ${s.campos.map(c => `<div class="campo"><label>${e(c.rotulo)}</label><div class="sub">${e(c.ajuda)}</div><div class="entrada">${entrada(c)}</div></div>`).join("")}</div>`).join("");
@@ -512,6 +587,12 @@ document.addEventListener("click", async ev => {
       window.open(j.url, "_blank", "noopener");
       avisar("Autorize na aba que abriu e depois volte aqui.");
     } catch (err) { avisar(err.message, true); }
+  } else if (t.id === "instalar-voz") {
+    await acaoConfig("voz/instalar", {}, "Instalando a voz. Leva alguns minutos.");
+    const espera = setInterval(async () => {
+      await carregarConfig();
+      if (!ajustes || ajustes.voz.estado !== "rodando") clearInterval(espera);
+    }, 4000);
   } else if (t.dataset.salvarBase) {
     acaoConfig("base/salvar", {nome: t.dataset.salvarBase, conteudo: document.querySelector(`[data-base="${t.dataset.salvarBase}"]`).value}, "Base salva.");
   } else if (t.dataset.removerBase) {
@@ -574,6 +655,7 @@ function abrirAba(nome) {
   document.querySelectorAll(".aba").forEach(a => a.classList.toggle("ativa", a.id === "aba-" + nome));
   try { localStorage.setItem("aba", nome); } catch (err) {}
   if (nome === "config") carregarConfig();
+  if (nome === "monetizacao") carregarMonetizacao();
 }
 
 // ---------- eventos ----------

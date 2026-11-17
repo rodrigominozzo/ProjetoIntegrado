@@ -32,6 +32,7 @@ class Gerenciador:
         self.cfg, self.banco = cfg, banco
         self.caminho_cfg, self.porta = caminho_cfg, porta
         self._fluxo_youtube = None
+        self._canal_yt: tuple[float, dict | None] = (0.0, None)
         self.tarefas: dict[str, dict] = {}
         self.lives: dict[str, MonitorLive] = {}
         self._trava = threading.RLock()
@@ -39,7 +40,41 @@ class Gerenciador:
         self._seq = itertools.count(1)
         self._ultima_busca = 0.0
         self._ultima_medida = 0.0
+        self._retomar()
         threading.Thread(target=self._laco, daemon=True, name="painel-laco").start()
+
+    # --- retomada: o que estava rodando quando o programa fechou volta ao abrir ---
+    def _em_andamento(self) -> list[dict]:
+        with self._trava:
+            lives = [{"alvo": m.url, "teste": bool(m.meta.get("teste"))}
+                     for m in self.lives.values()
+                     if m.estado["status"] in {"conectando", "acompanhando"} and not m.parado_pelo_usuario]
+            tarefas = [{"alvo": t["alvo"], "teste": t["teste"]} for t in self.tarefas.values()
+                       if t["status"] in {"identificando", "fila", "rodando"}]
+        return [x for x in lives + tarefas if re.match(r"https?://", x["alvo"])]
+
+    def _guardar(self) -> None:
+        self.banco.definir_opcao("em_andamento", json.dumps(self._em_andamento()))
+
+    def _retomar(self) -> None:
+        try:
+            pendentes = json.loads(self.banco.opcao("em_andamento", "[]"))
+        except json.JSONDecodeError:
+            pendentes = []
+        for p in pendentes:
+            log.info("Retomando %s", p["alvo"])
+            self.enviar(p["alvo"], p["teste"], origem="retomado")
+
+    def ativos(self) -> int:
+        return len(self._em_andamento())
+
+    def encerrar(self) -> None:
+        """Fecha com ordem: guarda o que estava em andamento e para as capturas."""
+        self._guardar()
+        with self._trava:
+            monitores = list(self.lives.values())
+        for m in monitores:
+            m.parar()
 
     # --- entrada de links ---
     def enviar(self, alvo: str, teste: bool, como_live: bool = False, origem: str = "manual") -> dict:
@@ -113,6 +148,7 @@ class Gerenciador:
         threading.Thread(target=rodar, daemon=True, name=f"live-{meta['id']}").start()
 
     def parar_live(self, live_id: str) -> None:
+        self.lives[live_id].parado_pelo_usuario = True
         self.lives[live_id].parar()
 
     def fechar_live(self, live_id: str) -> None:
@@ -130,6 +166,7 @@ class Gerenciador:
         while True:
             time.sleep(30)
             try:
+                self._guardar()
                 publicar.publicar_pendentes(self.cfg, self.banco)
                 if time.time() - self._ultima_medida >= 3600:
                     self._ultima_medida = time.time()
@@ -191,6 +228,8 @@ class Gerenciador:
                     situacao = "publicado"
                 elif c["teste"]:
                     situacao = "teste"
+                elif p == "ig" and c["origem"] == "compilacao":
+                    situacao = "não se aplica"
                 elif c[f"{p}_tentativas"] >= MAX_TENTATIVAS:
                     situacao = "falhou"
                 else:
@@ -224,6 +263,33 @@ class Gerenciador:
             "intervalo_min": self.cfg["publicar"]["intervalo_min"],
         }
 
+    # --- monetização ---
+    def monetizacao(self) -> dict:
+        from .publicar import youtube
+
+        agora = time.time()
+        if agora - self._canal_yt[0] > 1800:  # consulta o canal no máximo a cada 30 min
+            dados = None
+            if publicar.conectado("yt", self.cfg):
+                try:
+                    dados = youtube.estatisticas(self.cfg["publicar"]["youtube"])
+                except Exception as e:  # noqa: BLE001
+                    log.warning("Não foi possível ler os números do canal: %s", _resumo(e))
+            self._canal_yt = (agora, dados)
+        vistas = self.banco.vistas_por_canal()
+        campanhas = []
+        for c in self.banco.canais():
+            n = vistas.get(c["nome"], 0)
+            campanhas.append({
+                "id": c["id"], "nome": c["nome"] or c["id"], "valor_mil": c["valor_mil"] or 0,
+                "vistas": n, "ganho": round(n / 1000 * (c["valor_mil"] or 0), 2),
+                "tem_texto": bool(c["texto_obrigatorio"]), "tem_autorizacao": bool(c["autorizacao"])})
+        return {
+            "canal": self._canal_yt[1], "resumo": self.banco.resumo_monetizacao(),
+            "campanhas": campanhas, "moeda": self.cfg["monetizacao"]["moeda"],
+            "narracao": narracao.disponivel(self.cfg), "compilacao": self.cfg["compilacao"]["ativa"],
+        }
+
     # --- configurações ---
     def ajustes(self) -> dict:
         cfg_yt = self.cfg["publicar"]["youtube"]
@@ -238,7 +304,8 @@ class Gerenciador:
             "ia": ia.disponivel(self.cfg), "rostos": enquadramento.disponivel(),
             "whisper": transcricao.whisper_disponivel(),
             "voz": {"instalada": narracao.instalado(),
-                    "arquivo": Path(self.cfg["narracao"]["voz"]).exists()},
+                    "arquivo": Path(self.cfg["narracao"]["voz"]).exists(),
+                    **narracao.instalacao},
             "tem_cortes": bool(self.banco.todos_cortes()),
             "bases": [{"nome": b["nome"], "conteudo": b["bruto"], "sempre": b["sempre"],
                        "palavras": b["palavras"]} for b in conhecimento.listar(self.cfg)],
@@ -291,6 +358,10 @@ class Gerenciador:
             destino.chmod(0o600)
         elif nome == "youtube/conectar":
             return {"ok": True, "url": self.youtube_iniciar()}
+        elif nome == "voz/instalar":
+            if narracao.instalacao["estado"] != "rodando":
+                narracao.instalacao.update(estado="rodando", mensagem="Começando…")
+                threading.Thread(target=narracao.instalar_voz, args=(self.cfg,), daemon=True).start()
         elif nome == "base/salvar":
             conhecimento.salvar(self.cfg, d.get("nome", ""), d.get("conteudo", ""))
         elif nome == "base/remover":
@@ -322,6 +393,13 @@ class Gerenciador:
             self.banco.tentar_de_novo(corte["id"], plataforma)
             threading.Thread(target=publicar.publicar_um, daemon=True,
                              args=(self.cfg, self.banco, corte, plataforma)).start()
+        elif nome == "canal/campanha":
+            try:
+                valor = float(str(d.get("valor_mil") or 0).replace(",", "."))
+            except ValueError:
+                raise ValueError("O valor por mil visualizações precisa ser um número.") from None
+            self.banco.campanha(d["id"], max(0.0, valor), d.get("texto_obrigatorio", ""),
+                                d.get("autorizacao", ""))
         elif nome == "canal/seguir":
             self.banco.seguir_canal(d["id"], bool(d["seguir"]))
             self._ultima_busca = 0.0
@@ -401,6 +479,8 @@ def _manipulador(ger: Gerenciador):
                 return self._arquivo(PAGINA, "text/html; charset=utf-8")
             if rota == "/api/estado":
                 return self._json(ger.estado())
+            if rota == "/api/monetizacao":
+                return self._json(ger.monetizacao())
             if rota == "/api/ajustes":
                 return self._json(ger.ajustes())
             if rota == "/oauth/youtube":
@@ -450,8 +530,9 @@ def _manipulador(ger: Gerenciador):
     return Manipulador
 
 
-def servir(cfg: dict, banco: Banco, host: str = "127.0.0.1", porta: int = 8000,
-           caminho_cfg: str = "config.yaml") -> None:
+def criar(cfg: dict, banco: Banco, host: str = "127.0.0.1", porta: int = 8000,
+          caminho_cfg: str = "config.yaml"):
+    """Cria o servidor do painel (sem iniciá-lo). Devolve (servidor, gerenciador)."""
     class Servidor(ThreadingHTTPServer):
         daemon_threads = True
 
@@ -460,10 +541,19 @@ def servir(cfg: dict, banco: Banco, host: str = "127.0.0.1", porta: int = 8000,
             if not isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError)):
                 super().handle_error(request, client_address)  # navegador fechando conexão é normal
 
-    servidor = Servidor((host, porta), _manipulador(Gerenciador(cfg, banco, caminho_cfg, porta)))
+    servidor = Servidor((host, porta), None)
+    ger = Gerenciador(cfg, banco, caminho_cfg, servidor.server_address[1])
+    servidor.RequestHandlerClass = _manipulador(ger)
+    return servidor, ger
+
+
+def servir(cfg: dict, banco: Banco, host: str = "127.0.0.1", porta: int = 8000,
+           caminho_cfg: str = "config.yaml") -> None:
+    servidor, ger = criar(cfg, banco, host, porta, caminho_cfg)
     log.info("Painel em http://%s:%d", "localhost" if host in {"127.0.0.1", "0.0.0.0"} else host,
              servidor.server_address[1])
     try:
         servidor.serve_forever()
     except KeyboardInterrupt:
+        ger.encerrar()
         log.info("Painel encerrado.")

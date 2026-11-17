@@ -44,6 +44,7 @@ class MonitorLive:
         self.cortes: list[int] = []
         self._t0 = time.time()
         self._parar = threading.Event()
+        self.parado_pelo_usuario = False
         # Retrato do andamento, lido pelo painel.
         self.estado = {
             "status": "conectando", "inicio": self._t0, "limiar": lv["limiar"], "nivel": 0.0,
@@ -61,12 +62,13 @@ class MonitorLive:
         return subprocess.Popen(
             ["ffmpeg", "-v", "error", "-y", *entrada, "-f", "segment",
              "-segment_time", str(SEGMENTO), "-segment_format", "mpegts", "-strftime", "1",
-             "-reset_timestamps", "1", str(self.buffer / "seg_%s.ts")],
+             "-reset_timestamps", "1", str(self.buffer / "seg_%Y%m%d%H%M%S.ts")],
             stdin=subprocess.DEVNULL)
 
     def _segmentos(self) -> list[tuple[int, Path]]:
         """(instante de início, arquivo) em ordem. O último ainda está sendo gravado."""
-        return sorted((int(p.stem.split("_")[1]), p) for p in self.buffer.glob("seg_*.ts"))
+        return sorted((int(time.mktime(time.strptime(p.stem.split("_")[1], "%Y%m%d%H%M%S"))), p)
+                      for p in self.buffer.glob("seg_*.ts"))
 
     def _medir_volume(self, completos: list[tuple[int, Path]]) -> float | None:
         for inicio, arq in completos:

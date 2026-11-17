@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -22,6 +23,14 @@ POSICOES = {
 }
 
 
+def pasta_fontes(destino: Path) -> str:
+    """Copia as fontes embutidas para junto do corte e devolve o nome relativo da pasta."""
+    copia = destino / "_fontes"
+    if not copia.exists():
+        shutil.copytree(transcricao.PASTA_FONTES, copia, ignore=shutil.ignore_patterns("*.txt"))
+    return copia.name
+
+
 def _tem_audio(video: str | Path) -> bool:
     saida = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
@@ -33,12 +42,14 @@ def renderizar(video: str | Path, inicio: float, fim: float, saida: Path, *, for
                palavras: list | None = None, credito: str = "", gancho: str = "",
                marca: str = "", palavras_chave: list[str] | None = None,
                momento: float | None = None, abrir_com_pico: bool = False,
-               narracao: dict | None = None,
+               narracoes: list[dict] | None = None, encerramento: dict | None = None,
                cfg_cortes: dict | None = None, cfg_edicao: dict | None = None) -> dict:
     """Gera o MP4 final (H.264/AAC, 30 fps). Devolve {"arquivo", "layout", "duracao", "planos"}.
 
-    `narracao` = {"arquivo", "duracao", "texto", "volume", "fundo"}: voz de abertura,
-    misturada por cima do áudio original abaixado.
+    `narracoes` = [{"arquivo", "duracao", "texto", "t", "volume", "fundo"}]: falas do
+    narrador, misturadas por cima do áudio original abaixado. `t` é o instante no vídeo
+    de origem (None = abertura). `encerramento` = {"texto", "duracao", "arquivo"?}:
+    comentário final sobre o último quadro congelado.
     """
     cfg_cortes, cfg_edicao = cfg_cortes or {}, cfg_edicao or {}
     largura, altura = TAMANHOS.get(formato, TAMANHOS["auto"])
@@ -73,61 +84,84 @@ def renderizar(video: str | Path, inicio: float, fim: float, saida: Path, *, for
         tipo = layout["tipo"]
     duracao = plano["duracao"]
 
-    # 3. Acabamento: clarão na virada da abertura, barra de progresso, legendas.
-    etapas = []
+    # 3. Narrações: cada uma entra no seu instante; as que não cabem ou se atropelam saem.
+    vozes, livre = [], 0.0
+    for n in narracoes or []:
+        t = ENTRADA_NARRACAO if n.get("t") is None else (
+            edicao.tempo_de_saida(plano, n["t"]) if tipo != "original" else n["t"] - inicio)
+        if t is None or t < livre or t + n["duracao"] > duracao - 0.3:
+            continue
+        vozes.append({**n, "saida": t})
+        livre = t + n["duracao"] + 0.6
+    corpo = duracao  # duração do vídeo antes do encerramento
+    if encerramento:  # quadro final congelado, com o comentário de fechamento do canal
+        vozes.append({**encerramento, "saida": corpo + 0.25, "final": True})
+        duracao = corpo + encerramento["duracao"] + 0.7
+
+    # 4. Acabamento: clarão na virada da abertura, encerramento, barra de progresso, legendas.
+    antes, depois = [], []  # filtros antes e depois da barra de progresso
     if plano.get("flash"):
         t = plano["flash"]
-        etapas.append(f"eq=brightness=0.35:enable='between(t,{t - 0.04:.2f},{t + 0.08:.2f})'")
-    legendas = remapeadas = None
+        antes.append(f"eq=brightness=0.35:enable='between(t,{t - 0.04:.2f},{t + 0.08:.2f})'")
+    if encerramento:
+        antes.append(f"tpad=stop_mode=clone:stop_duration={duracao - corpo:.2f},"
+                      f"boxblur=12:2:enable='gte(t,{corpo:.2f})',"
+                      f"eq=brightness=-0.22:enable='gte(t,{corpo:.2f})'")
+    remapeadas = None
     if palavras and cfg_cortes.get("legendas", True) and tipo != "original":
         remapeadas = edicao.remapear(palavras, plano["pedacos"])
     elif palavras and cfg_cortes.get("legendas", True):
         remapeadas = [(a - inicio, b - inicio, t) for a, b, t in palavras if inicio <= a < fim]
-    if remapeadas or credito or gancho or marca:
+    if remapeadas or credito or gancho or marca or vozes:
         legendas = saida.with_suffix(".ass")
         legendas.write_text(transcricao.gerar_ass(
             remapeadas or [], 0, duracao, largura, altura, credito=credito, gancho=gancho,
             marca=marca, posicao=POSICOES[tipo], karaoke=cfg_cortes.get("karaoke", True),
             cor_destaque=cfg_cortes.get("cor_destaque", "#FFE000"),
-            palavras_chave=palavras_chave,
-            narracao=(narracao["texto"], ENTRADA_NARRACAO, narracao["duracao"]) if narracao else None,
+            palavras_chave=palavras_chave, fonte=cfg_cortes.get("fonte", "Montserrat Black"),
+            narracoes=[(v["texto"], v["saida"], v["duracao"]) for v in vozes if not v.get("final")],
+            encerramento=next(((v["texto"], v["saida"], v["duracao"] + 0.4) for v in vozes
+                               if v.get("final")), None),
         ), encoding="utf-8")
-        etapas.append(f"ass={legendas.name}")  # nome relativo + cwd evita escapes no filtro
-    etapas.append("format=yuv420p")
-    fc = video_fc
+        depois.append(f"ass={legendas.name}:fontsdir={pasta_fontes(saida.parent)}")  # nomes relativos + cwd evitam escapes no filtro
+    depois.append("format=yuv420p")
+    fc = video_fc + f";[vc]{','.join(antes) or 'null'}[vp]"
     if cfg_edicao.get("barra_progresso", True) and tipo != "original":
         cor = cfg_cortes.get("cor_destaque", "#FFE000").replace("#", "0x")
         fc += (f";color=c={cor}:s={largura}x10:r=30[barra];"
-               f"[vc][barra]overlay=x='-w+w*t/{duracao:.3f}':y=H-h:shortest=1[vb]"
-               f";[vb]{','.join(etapas)}[v]")
+               f"[vp][barra]overlay=x='-w+w*t/{duracao:.3f}':y=H-h:shortest=1[vb]"
+               f";[vb]{','.join(depois)}[v]")
     else:
-        fc += f";[vc]{','.join(etapas)}[v]"
+        fc += f";[vp]{','.join(depois)}[v]"
     ultimo = max(p["b"] for p in plano["pedacos"])
-    mapas = ["-map", "[v]"]
+    mapas = ["-map", "[v]", "-map", "[a]"]
     entradas = ["-ss", f"{inicio:.3f}", "-t", f"{ultimo - inicio + 2:.3f}",
                 "-i", str(Path(video).resolve())]
-    if narracao:
-        entradas += ["-i", str(Path(narracao["arquivo"]).resolve())]
-        atraso = int(ENTRADA_NARRACAO * 1000)
-        voz = (f"[1:a]aresample=48000,volume={narracao.get('volume', 1.0):.2f},"
-               f"adelay={atraso}:all=1")
-        if tem_audio:  # abaixa o original só enquanto a narração fala
-            fim_n = ENTRADA_NARRACAO + narracao["duracao"]
-            fc += (f";[ac]aresample=48000,volume='if(between(t,0,{fim_n + 0.1:.2f}),"
-                   f"{narracao.get('fundo', 0.25):.2f},1)':eval=frame[fundo];{voz}[voz];"
-                   f"[fundo][voz]amix=inputs=2:duration=first:normalize=0[ac2]")
-            fc += ";[ac2]loudnorm=I=-14:TP=-1.5:LRA=11[a]"
-        else:
-            fc += f";{voz},apad[a]"
-        mapas += ["-map", "[a]"]
-    elif tem_audio:
-        fc += ";[ac]loudnorm=I=-14:TP=-1.5:LRA=11[a]"
-        mapas += ["-map", "[a]"]
+    falados = [v for v in vozes if v.get("arquivo")]
+    for v in falados:
+        entradas += ["-i", str(Path(v["arquivo"]).resolve())]
+    volume, fundo = (falados[0].get("volume", 1.0), falados[0].get("fundo", 0.25)) if falados else (1, 1)
+    if tem_audio:
+        fc += f";[ac]aresample=48000,apad=whole_dur={duracao:.3f}"
+        if falados:  # abaixa o original só enquanto o narrador fala
+            janelas = "+".join(f"between(t,{v['saida'] - 0.1:.2f},{v['saida'] + v['duracao'] + 0.1:.2f})"
+                               for v in falados)
+            fc += f",volume='if({janelas},{fundo:.2f},1)':eval=frame"
+        fc += "[fundo]"
+    else:
+        fc += f";anullsrc=r=48000:cl=stereo,atrim=duration={duracao:.3f}[fundo]"
+    for k, v in enumerate(falados):
+        fc += (f";[{k + 1}:a]aresample=48000,volume={volume:.2f},"
+               f"adelay={int(v['saida'] * 1000)}:all=1[n{k}]")
+    if falados:
+        fc += (";[fundo]" + "".join(f"[n{k}]" for k in range(len(falados)))
+               + f"amix=inputs={len(falados) + 1}:duration=first:normalize=0[mix]")
+    fc += f";[{'mix' if falados else 'fundo'}]loudnorm=I=-14:TP=-1.5:LRA=11[a]"
 
     subprocess.run(
         ["ffmpeg", "-v", "error", "-y", *entradas, "-filter_complex", fc, *mapas, "-t", f"{duracao:.3f}",
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
-         "-ar", "48000", "-movflags", "+faststart", str(saida)],
+         "-ar", "48000", "-ac", "2", "-movflags", "+faststart", str(saida)],
         check=True, cwd=saida.parent,
     )
     return {"arquivo": saida, "layout": tipo, "duracao": duracao,

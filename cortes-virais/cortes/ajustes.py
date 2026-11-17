@@ -36,6 +36,12 @@ SECOES = [
                      ["vertical_blur", "Vídeo inteiro com fundo desfocado"],
                      ["vertical_crop", "Recorte central"], ["original", "Horizontal, sem recorte"]]}),
         ("cortes.legendas", "booleano", "Legendas", "Legenda grande queimada no vídeo.", {}),
+        ("cortes.fonte", "escolha", "Fonte das legendas e do gancho",
+         "Todas são pesadas e legíveis em tela pequena. Montserrat Black é o padrão dos "
+         "grandes canais de cortes; Anton é estreita e alta; Bangers tem cara de quadrinhos, "
+         "boa para humor.",
+         {"opcoes": [[f, f] for f in ("Montserrat Black", "Montserrat ExtraBold",
+                                      "Poppins ExtraBold", "Anton", "Bangers")]}),
         ("cortes.karaoke", "booleano", "Destacar a palavra falada",
          "A palavra dita no momento muda de cor, como nos vídeos curtos mais vistos.", {}),
         ("cortes.cor_destaque", "cor", "Cor de destaque",
@@ -68,7 +74,19 @@ SECOES = [
     ]),
     ("Narração do canal", "Uma frase de abertura dita por uma voz sintética, escrita pela IA: "
      "contexto e um olhar próprio sobre o trecho. A voz roda no seu computador, sem custo.", [
-        ("narracao.ativa", "booleano", "Narrar a abertura dos cortes",
+        ("narracao.motor", "escolha", "Voz",
+         "A local é gratuita. A ElevenLabs soa mais natural, cobra por uso e exige a chave "
+         "ELEVENLABS_API_KEY e o ID de uma voz.",
+         {"opcoes": [["piper", "Local e gratuita (Piper)"], ["elevenlabs", "ElevenLabs (paga)"]]}),
+        ("narracao.voz_elevenlabs", "texto", "ID da voz na ElevenLabs",
+         "Copie em elevenlabs.io, na biblioteca de vozes. Só vale para o motor ElevenLabs.", {}),
+        ("narracao.max_falas", "inteiro", "Falas por corte (máximo)",
+         "A IA decide quantas usar, de zero até este limite: abertura, tensão e reação.",
+         {"min": 0, "max": 3}),
+        ("narracao.encerramento", "booleano", "Encerrar com pergunta ao público",
+         "Congela o último quadro por 2 a 3 s enquanto o narrador faz uma pergunta para "
+         "puxar comentários.", {}),
+        ("narracao.ativa", "booleano", "Narrar os cortes",
          "Precisa da voz instalada (veja “Recursos opcionais” no topo desta página). Sem "
          "ela, os cortes saem normalmente, sem narração.", {}),
         ("narracao.voz", "texto", "Arquivo da voz",
@@ -132,6 +150,14 @@ SECOES = [
          {"min": 0, "max": 1440}),
         ("auto.intervalo_min", "inteiro", "Minutos entre buscas nos canais acompanhados", "",
          {"min": 5, "max": 1440}),
+        ("compilacao.ativa", "booleano", "Montar a compilação “Top N” de cada vídeo",
+         "Formato extra, fora do padrão de vídeo curto: vídeo horizontal com contagem "
+         "regressiva narrada, publicado só no YouTube como vídeo comum. Soma horas de "
+         "exibição e é o formato mais próximo do que a política de monetização aceita.",
+         {}),
+        ("compilacao.minimo", "inteiro", "Cortes mínimos para montar a compilação", "",
+         {"min": 2, "max": 10}),
+        ("monetizacao.moeda", "texto", "Moeda das campanhas", "Usada nos ganhos estimados.", {}),
         ("idioma", "texto", "Idioma dos textos e legendas", "Código de duas letras, como pt ou en.",
          {}),
     ]),
@@ -139,6 +165,7 @@ SECOES = [
 
 CHAVES = {
     "ANTHROPIC_API_KEY": "Chave da API do Claude",
+    "ELEVENLABS_API_KEY": "Chave da ElevenLabs (voz mais natural, opcional)",
     "IG_USER_ID": "ID da conta do Instagram",
     "IG_ACCESS_TOKEN": "Token de acesso do Instagram",
     "YOUTUBE_API_KEY": "Chave da API do YouTube (só para a busca aberta)",

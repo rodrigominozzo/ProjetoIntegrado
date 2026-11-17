@@ -32,14 +32,26 @@ def login(cfg_yt: dict) -> None:
     _credenciais(cfg_yt, interativo=True)
 
 
+def estatisticas(cfg_yt: dict) -> dict:
+    """Inscritos e visualizações do canal conectado."""
+    from googleapiclient.discovery import build
+
+    yt = build("youtube", "v3", credentials=_credenciais(cfg_yt), cache_discovery=False)
+    item = yt.channels().list(part="snippet,statistics", mine=True).execute()["items"][0]
+    e = item["statistics"]
+    return {"nome": item["snippet"]["title"], "inscritos": int(e.get("subscriberCount", 0)),
+            "vistas": int(e.get("viewCount", 0)), "videos": int(e.get("videoCount", 0))}
+
+
 def enviar(arquivo: str | Path, titulo: str, descricao: str, hashtags: list[str],
-           cfg_yt: dict) -> str:
+           cfg_yt: dict, curto: bool = True) -> str:
     """Envia o vídeo e devolve o ID. Vertical com menos de 3 min vira Short sozinho."""
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 
     yt = build("youtube", "v3", credentials=_credenciais(cfg_yt), cache_discovery=False)
-    titulo = titulo if "#shorts" in titulo.lower() or len(titulo) > 91 else f"{titulo} #shorts"
+    if curto and "#shorts" not in titulo.lower() and len(titulo) <= 91:
+        titulo = f"{titulo} #shorts"
     pedido = yt.videos().insert(
         part="snippet,status",
         body={

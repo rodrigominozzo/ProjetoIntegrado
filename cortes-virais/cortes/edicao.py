@@ -142,6 +142,17 @@ def planejar(layout: dict, inicio: float, fim: float, *, palavras: list | None =
             "duracao": sum(p["b"] - p["a"] for p in pedacos)}
 
 
+def tempo_de_saida(plano: dict, t: float) -> float | None:
+    """Instante do corte final em que aparece o instante `t` do vídeo de origem."""
+    saida = 0.0
+    for i, p in enumerate(plano["pedacos"]):
+        previa = i == 0 and plano.get("flash")  # a prévia de abertura não conta
+        if not previa and p["a"] <= t < p["b"]:
+            return saida + t - p["a"]
+        saida += p["b"] - p["a"]
+    return None
+
+
 def remapear(palavras: list, pedacos: list[dict]) -> list:
     """Leva as palavras do tempo de origem para o tempo do corte final (começando em 0)."""
     saida, t = [], 0.0

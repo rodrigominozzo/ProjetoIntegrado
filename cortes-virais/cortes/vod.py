@@ -7,7 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
-from . import chat, desempenho, fontes, ia, narracao, render, sinais, transcricao
+from . import (chat, compilacao, desempenho, fontes, ia, narracao, render, sinais,
+               transcricao)
 from .banco import Banco
 
 log = logging.getLogger(__name__)
@@ -22,20 +23,14 @@ def finalizar(c: dict, video: Path, contexto: dict, cfg: dict, banco: Banco, pas
     creditar = cfg["publicar"]["creditar_fonte"] and canal
     saida = pasta / f"corte_{int(c['inicio']):06d}.mp4"
     momento = c.get("momento")
-    voz = None
-    if c.get("narracao") and narracao.disponivel(cfg):
-        arq_voz = saida.with_suffix(".narracao.wav")
-        dur_voz = narracao.sintetizar(c["narracao"], arq_voz, cfg)
-        if dur_voz:
-            voz = {"arquivo": arq_voz, "duracao": dur_voz, "texto": c["narracao"],
-                   "volume": cfg["narracao"]["volume"], "fundo": cfg["narracao"]["fundo"]}
+    falas, final = narracao.preparar(c, saida, ini, cfg)
     feito = render.renderizar(
         video, ini, fim, saida, formato=cfg["cortes"]["formato"], palavras=palavras,
         credito=f"Créditos: {canal}" if creditar else "",
         gancho=c.get("gancho", "") if cfg["cortes"]["gancho"] else "",
         marca=cfg["cortes"]["marca"], palavras_chave=c.get("palavras_chave"),
         momento=None if momento is None else ini + momento,
-        abrir_com_pico=bool(c.get("abrir_com_pico")), narracao=voz,
+        abrir_com_pico=bool(c.get("abrir_com_pico")), narracoes=falas, encerramento=final,
         cfg_cortes=cfg["cortes"], cfg_edicao=cfg["edicao"],
     )
     layout = feito["layout"]
@@ -43,11 +38,14 @@ def finalizar(c: dict, video: Path, contexto: dict, cfg: dict, banco: Banco, pas
     if creditar and contexto.get("url"):
         sep = "&" if "?" in contexto["url"] else "?"
         descricao += f"\n\nFonte: {canal} — {contexto['url']}{sep}t={int(c['inicio'])}s"
+    campanha = banco.canal(contexto.get("canal_id"))
+    if campanha and campanha["texto_obrigatorio"]:  # exigência da campanha paga do canal
+        descricao += f"\n\n{campanha['texto_obrigatorio']}"
     corte_id = banco.novo_corte(
         video_id=contexto["id"], origem=origem, inicio=c["inicio"], fim=c["fim"], nota=c["nota"],
         titulo=c["titulo"], descricao=descricao, hashtags=c["hashtags"], arquivo=saida,
         urgente=urgente, teste=bool(contexto.get("teste")), gancho=c.get("gancho", ""),
-        notas=c.get("notas"), layout=layout, narracao=c["narracao"] if voz else "")
+        notas=c.get("notas"), layout=layout, narracao=" / ".join([f["texto"] for f in falas] + ([final["texto"]] if final else [])))
     log.info("Corte %s pronto: [%.0fs–%.0fs] nota %.0f — %s", corte_id, c["inicio"], c["fim"],
              c["nota"], c["titulo"])
     return corte_id
@@ -166,6 +164,14 @@ def processar(alvo: str, cfg: dict, banco: Banco, *, chat_arquivo: str | None = 
     for i, c in enumerate(escolhidos):
         progresso(f"Renderizando corte {i + 1} de {len(escolhidos)}", i / len(escolhidos))
         criados.append(finalizar(c, video, meta, cfg, banco, pasta, "vod", c["falas"]))
+    try:
+        if len(escolhidos) >= cfg["compilacao"]["minimo"] and cfg["compilacao"]["ativa"]:
+            progresso("Montando a compilação narrada")
+            comp = compilacao.montar(video, escolhidos, meta, cfg, banco, pasta)
+            if comp:
+                criados.append(comp)
+    except Exception:  # noqa: BLE001 — a compilação é um extra: os cortes já estão prontos
+        log.exception("Falha ao montar a compilação")
     banco.marcar_video(meta["id"], meta["titulo"], meta["canal"],
                        "teste" if meta.get("teste") else "feito")
     if cfg["cortes"]["apagar_fonte"] and "arquivo" not in meta:

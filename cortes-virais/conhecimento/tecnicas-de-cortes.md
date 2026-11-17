@@ -37,3 +37,14 @@ O que reprovar
 - Trecho que só faz sentido para quem viu o resto do vídeo.
 - Piada interna, conversa morna, jogada comum sem reação.
 - Qualquer coisa que distorça o que a pessoa disse.
+
+Narração no estilo dos grandes canais de cortes
+- O narrador é um espectador empolgado contando para um amigo, não um locutor. Frases
+  curtas, no presente, com "olha", "repara", "espera".
+- Três momentos, no máximo: antes (por que ficar), durante (para onde olhar) e depois
+  (a reação que todo mundo teve). Raramente os três no mesmo corte.
+- Fala com quem assiste: pergunta, desafio, comparação. "Você teria coragem?"
+- Em gameplay, o narrador traduz o que está em jogo para quem não conhece o jogo:
+  "Se ele errar aqui, perde três horas de progresso."
+- Silêncio também é edição: no ápice, ninguém fala por cima.
+- O fim é uma pergunta que divide opiniões. Comentário é o que mais empurra o vídeo.

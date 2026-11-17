@@ -47,23 +47,44 @@ pela IA, ou o pico de volume), o sistema monta uma sequência de planos:
   momento-chave; pausas longas de fala são removidas.
 - **Abertura pelo ápice:** quando o começo é morno, a IA pode abrir com 1,5 s do melhor
   momento antes de voltar ao início.
+- **Tipografia:** fontes pesadas e modernas embutidas no projeto (Montserrat Black por
+  padrão; também Montserrat ExtraBold, Poppins ExtraBold, Anton e Bangers), trocáveis na
+  aba Configurações.
 - **Acabamento:** gancho com entrada animada, legenda karaokê com palavras-chave em
   destaque, barra de progresso, nome do canal no canto.
 
 ### Narração do canal (opcional)
 
-A IA escreve uma frase de abertura — contexto e um olhar próprio sobre o trecho — e uma
-voz sintética local a diz nos primeiros segundos, com o áudio original abaixado e a
-frase na legenda. Para ligar:
+A IA escreve até três falas curtas no estilo dos narradores de canais de cortes —
+abertura (por que ficar), tensão (para onde olhar) e reação (o que todo mundo pensou) — e
+uma pergunta final para puxar comentários, dita sobre o último quadro congelado. Uma voz
+sintética as diz por cima do vídeo, com o áudio original abaixado. A IA só narra quando
+isso melhora o corte.
 
-```bash
-pip install piper-tts
-python -m piper.download_voices pt_BR-faber-medium --download-dir vozes
-```
+A voz padrão roda no seu computador, sem custo. O instalador já a baixa; se não baixou,
+use o botão "Instalar a voz agora" na aba Configurações. Depois ative "Narrar os
+cortes". Há também a opção ElevenLabs (mais natural, paga por uso).
 
-Depois ative "Narrar a abertura dos cortes" na aba Configurações. A voz roda no seu
-computador, sem conta nem custo. Quando o trecho abre com uma fala que não pode ser
-coberta, a IA deixa o corte sem narração.
+### Compilação "Top N"
+
+Formato extra, **desligado por padrão** (o foco do sistema são Shorts e Reels). Ligado
+na aba Configurações, de cada vídeo com pelo menos três cortes sai também um vídeo horizontal com contagem
+regressiva: abertura, cartão numerado antes de cada momento e narração nas passagens,
+com capítulos na descrição. É publicado só no YouTube, como vídeo comum.
+
+### Monetização
+
+A aba Monetização reúne os caminhos de receita e o andamento de cada um:
+
+1. **Campanhas que pagam por visualização.** Streamers e marcas pagam quem publica
+   cortes deles (em torno de US$ 1 por mil visualizações, sem mínimo de inscritos).
+   Cadastre na aba Canais o valor, o texto que a campanha exige na descrição e o
+   comprovante de autorização; o sistema aplica o texto em todo corte daquele canal e
+   estima os ganhos pelas visualizações medidas.
+2. **Acordo direto com o criador.**
+3. **Anúncios do YouTube.** Mostra inscritos e visualizações contra as metas do Programa
+   de Parcerias e a parcela de cortes com narração.
+4. **Instagram**, com alcance limitado para contas de republicação.
 
 ### Bases de conhecimento
 
@@ -82,17 +103,27 @@ Já vêm duas: `tecnicas-de-cortes` (sempre ativa) e `gta-vi`.
 
 O layout é escolhido uma vez por corte. Não há troca de enquadramento conforme quem fala.
 
-## Instalação
+## Instalação e abertura
 
-Requer Python 3.10+ e `ffmpeg`.
+Requer `ffmpeg` e **Python entre 3.10 e 3.13** (as versões 3.14 e 3.15 ainda não têm
+todas as bibliotecas de vídeo e voz).
 
-```bash
-cd cortes-virais
-pip install -r requirements.txt
-pip install chat-downloader faster-whisper   # opcionais, recomendados
-cp config.exemplo.yaml config.yaml
-cp .env.exemplo .env                          # preencha as chaves
-```
+| Sistema | Instalar (uma vez) | Abrir |
+|---|---|---|
+| Windows | dois cliques em `instalar.bat` | dois cliques em `Cortes Virais.bat` |
+| macOS | `./instalar.sh` no Terminal | dois cliques em `Cortes Virais.command` |
+| Linux | `./instalar.sh` | `./cortes-virais.sh` |
+
+No Windows, se faltar algo: `winget install Python.Python.3.12` e
+`winget install Gyan.FFmpeg`. O instalador cria uma pasta isolada (`.venv`), instala
+tudo, baixa a voz da narração e prepara o `config.yaml`.
+
+O programa abre numa janela própria. **Enquanto ela estiver aberta, tudo roda**: lives
+acompanhadas, análises, fila de publicação e canais seguidos. Ao fechar, o que estava em
+andamento é guardado e retomado na próxima abertura. O registro fica em `dados/cortes.log`.
+
+Instalação manual, se preferir: `pip install -r requirements.txt`, copiar
+`config.exemplo.yaml` para `config.yaml` e rodar `python -m cortes app`.
 
 ### Contas
 
@@ -119,6 +150,7 @@ Cole o link de um vídeo ou de uma live no topo; o sistema identifica o tipo soz
 | **Cortes** | Os cortes prontos, agrupados pelo vídeo ou live de origem, com player. |
 | **Publicações** | Situação das contas, limite diário e a fila: o que saiu, o que falhou (com o erro) e botões para publicar ou tentar de novo. |
 | **Configurações** | Passo a passo para ligar a IA e conectar YouTube e Instagram, todas as opções com explicação, escolha dos modelos e editor das bases de conhecimento. |
+| **Monetização** | Caminhos de receita, ganhos estimados das campanhas, metas do Programa de Parcerias e originalidade do canal. |
 | **Canais** | Canais dos links que você enviou, tratados como confiáveis. Ligue "Acompanhar automaticamente" para cortar as lives e vídeos novos deles sem enviar link. |
 
 **Modo teste:** com a chave ligada, o vídeo ou a live é processado normalmente, mas os

@@ -309,8 +309,9 @@ def test_narracao_de_abertura(video, tmp_path):
     falas = [(20 + i * 0.5, 20.4 + i * 0.5, f"p{i}") for i in range(16)]
     feito = render.renderizar(
         video, 20, 30, tmp_path / "c.mp4", formato="vertical_blur", palavras=falas,
-        narracao={"arquivo": voz, "duracao": 2.0, "texto": "Contexto dito pelo canal",
-                  "volume": 1.0, "fundo": 0.2},
+        narracoes=[{"arquivo": voz, "duracao": 2.0, "texto": "Contexto dito pelo canal",
+                    "volume": 1.0, "fundo": 0.2, "t": None}],
+        encerramento={"arquivo": voz, "duracao": 2.0, "texto": "E você, faria igual?"},
         cfg_cortes=cfg["cortes"], cfg_edicao=cfg["edicao"])
     ass = (tmp_path / "c.ass").read_text()
     assert "CONTEXTO DITO PELO" in ass
@@ -323,4 +324,39 @@ def test_narracao_de_abertura(video, tmp_path):
             capture_output=True, text=True).stderr
         return float(saida.split("mean_volume:")[1].split()[0])
 
-    assert nivel(0.3) > nivel(5) + 20                         # a voz só existe na abertura
+    assert nivel(0.3) > nivel(5) + 20                         # a voz não vaza para o meio
+    assert feito["duracao"] == pytest.approx(10 + 2.7)        # quadro final congelado
+    assert "E você, faria igual?" in ass and nivel(10.4) > nivel(5) + 20
+
+
+def test_compilacao_e_campanha(video, tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg["cortes"]["por_video"] = 3
+    cfg["ia"]["nota_minima"] = 0
+    cfg["compilacao"]["ativa"] = True                         # vem desligada por padrão
+    banco = Banco(tmp_path / "e.db")
+    ids = vod.processar(str(video), cfg, banco)
+    cortes = {c["id"]: c for c in banco.todos_cortes()}
+    assert len(ids) == 4                                       # 3 cortes + a compilação
+    comp = next(c for c in cortes.values() if c["origem"] == "compilacao")
+    assert comp["titulo"].startswith("Top 3 momentos") and "0:00 Abertura" in comp["descricao"]
+    sonda = json.loads(subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,width,height:format=duration",
+         "-of", "json", comp["arquivo"]], capture_output=True, text=True).stdout)
+    v = next(s for s in sonda["streams"] if s["codec_type"] == "video")
+    assert (v["width"], v["height"]) == (1920, 1080)
+    assert float(sonda["format"]["duration"]) > 3 * 20        # três trechos mais as passagens
+    assert comp["id"] in [c["id"] for c in banco.pendentes("yt")]
+    assert comp["id"] not in [c["id"] for c in banco.pendentes("ig")]   # só no YouTube
+
+    # campanha do canal: o texto exigido entra sozinho na descrição dos cortes
+    banco.canal_confiavel("UC123", "Canal X")
+    banco.campanha("UC123", 1.5, "#campanha @canalx", "autorizado por e-mail")
+    meta = {"id": "v2", "titulo": "Outro", "canal": "Canal X", "canal_id": "UC123", "url": ""}
+    c = {"inicio": 60.0, "fim": 70.0, "nota": 80, "titulo": "T", "descricao": "D", "hashtags": []}
+    cid = vod.finalizar(c, video, meta, cfg, banco, tmp_path / "v2", "vod", [])
+    assert banco.corte(cid)["descricao"].endswith("#campanha @canalx")
+    banco.marcar_video("v2", "Outro", "Canal X", "feito")
+    banco.publicado(cid, "yt", "abc")
+    banco.medir("yt", "abc", vistas=20000, curtidas=10)
+    assert banco.vistas_por_canal()["Canal X"] == 20000       # 20 mil × 1,50 = 30 de estimativa

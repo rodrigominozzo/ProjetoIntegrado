@@ -37,8 +37,10 @@ def publicar_um(cfg: dict, banco: Banco, corte, plataforma: str) -> bool:
             raise FileNotFoundError("arquivo do corte não existe mais")
         if plataforma == "yt":
             remoto = youtube.enviar(corte["arquivo"], corte["titulo"], _texto(corte, "yt"),
-                                    json.loads(corte["hashtags"] or "[]"), cfg_p)
-            link = f"https://youtube.com/shorts/{remoto}"
+                                    json.loads(corte["hashtags"] or "[]"), cfg_p,
+                                    curto=corte["origem"] != "compilacao")
+            link = (f"https://youtu.be/{remoto}" if corte["origem"] == "compilacao"
+                    else f"https://youtube.com/shorts/{remoto}")
         else:
             remoto, link = instagram.enviar(corte["arquivo"], _texto(corte, "ig"), cfg_p)
     except Exception as e:  # noqa: BLE001

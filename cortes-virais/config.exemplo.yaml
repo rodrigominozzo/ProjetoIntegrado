@@ -22,11 +22,12 @@ cortes:
   por_video: 5
   formato: auto          # auto (segue rostos) | vertical_blur | vertical_crop | original
   legendas: true
+  fonte: Montserrat Black  # Montserrat ExtraBold | Poppins ExtraBold | Anton | Bangers
   karaoke: true          # destaca a palavra que está sendo falada
   cor_destaque: "#FFE000"
   gancho: true           # frase de impacto fixa no topo (escrita pela IA)
 
-  marca: ""              # nome do seu canal no canto do vídeo (ex.: @meucanal)
+  marca: "@GamePlayCortesBR"   # nome do canal no canto do vídeo e nos convites para seguir
 
 edicao:
   dinamica: true         # troca de plano e zoom ao longo do corte

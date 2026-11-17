@@ -26,10 +26,11 @@ PADRAO = {
         "intervalo_minimo": 45,  # segundos entre o início de dois cortes
         "formato": "auto",  # auto (segue rostos) | vertical_blur | vertical_crop | original
         "legendas": True,
+        "fonte": "Montserrat Black",  # ou Montserrat ExtraBold, Poppins ExtraBold, Anton, Bangers
         "karaoke": True,          # destaca a palavra que está sendo falada
         "cor_destaque": "#FFE000",
         "gancho": True,           # frase de impacto fixa no topo do vídeo
-        "marca": "",              # nome do seu canal, discreto no canto (ex.: @meucanal)
+        "marca": "@GamePlayCortesBR",  # nome do canal, discreto no canto do vídeo
         "altura_max": 1080,
         "apagar_fonte": True,
     },
@@ -53,12 +54,18 @@ PADRAO = {
         "barra_progresso": True,
     },
     "narracao": {
-        "ativa": False,            # frase de abertura dita por voz sintética local
+        "ativa": False,            # falas do narrador do canal por cima do corte
+        "motor": "piper",          # piper (local, gratuito) | elevenlabs (mais natural, pago)
+        "voz_elevenlabs": "",      # ID da voz, se o motor for elevenlabs
+        "max_falas": 3,
+        "encerramento": True,      # quadro final com pergunta para os comentários
         "voz": "vozes/pt_BR-faber-medium.onnx",
         "volume": 1.0,
         "velocidade": 1.05,
         "fundo": 0.25,             # volume do áudio original enquanto a narração fala
     },
+    # Vídeo longo horizontal "Top N" narrado, só no YouTube. Desligado: o foco são os curtos.
+    "compilacao": {"ativa": False, "minimo": 3},
     "conhecimento": {"pasta": "conhecimento"},
     "live": {
         "limiar": 4.0,
@@ -84,6 +91,7 @@ PADRAO = {
         "instagram": {"ativo": True, "max_por_dia": 20, "versao_api": "v21.0"},
     },
     "auto": {"intervalo_min": 30},
+    "monetizacao": {"moeda": "US$"},
 }
 
 

@@ -38,13 +38,25 @@ Escreva, no idioma pedido:
 - titulo: até 70 caracteres, fiel ao trecho, com as palavras que alguém buscaria (nome da
   pessoa, jogo, assunto); sem clickbait enganoso e sem caixa alta contínua.
 - descricao: 1 ou 2 frases com contexto e, no fim, um único convite à ação (por exemplo,
-  seguir o canal). Um só: vários pedidos juntos fazem a pessoa ignorar todos.
+  seguir o nosso canal, citando o nome dele). Um só: vários pedidos juntos fazem a pessoa ignorar todos.
 - hashtags: de 3 a 6, sem o '#', misturando o tema específico e o geral.
-- narracao: uma frase de até 14 palavras, que um narrador do canal diz nos primeiros
-  segundos por cima do vídeo. É a contribuição própria do canal: dê o contexto que falta
-  a quem não viu o resto e um olhar seu sobre por que o momento é notável. Não descreva o
-  que já se vê, não repita o gancho, não entregue o desfecho. Se o trecho abre com uma
-  fala que não pode ser coberta, ou não há nada útil a acrescentar, devolva vazio.
+
+Narração do canal (é a contribuição original do canal sobre o trecho; uma voz a diz por
+cima do vídeo). Escreva como os narradores dos grandes canais de cortes: fala de gente,
+curta, no presente, conversando com quem assiste. Nada de tom de locutor ou de resumo.
+- narracoes: de 0 a 3 falas, cada uma com até 14 palavras e o segundo em que entra
+  (contado do início atual do candidato). Funções possíveis, nesta ordem:
+  1. abertura (segundo 0): o contexto que falta e o motivo para ficar. Ex.: "Ele jurou
+     que nunca mais jogava isso. Olha o que aconteceu."
+  2. tensão, um pouco antes do ápice: chama o olhar. Ex.: "Repara no canto da tela."
+  3. reação, logo depois do ápice: o comentário que o público faria. Ex.: "Ninguém
+     no chat acreditou."
+  Coloque cada fala numa pausa: nunca por cima de uma frase importante nem do ápice.
+- comentario_final: uma pergunta ou provocação de até 10 palavras, dita sobre o quadro
+  final, que dê vontade de responder nos comentários. Ex.: "E você, arriscava?"
+Só narre quando isso melhora o corte. Se o trecho já se explica e prende sozinho, devolva
+narracoes vazio — narração sobrando atrapalha. Nunca descreva o que já se vê, não repita
+o gancho, não entregue o desfecho antes da hora e não invente fatos.
 
 Direção de edição (o programa monta o vídeo a partir destas três respostas):
 - momento_chave: em que segundo, contado do início atual do candidato, acontece o ápice
@@ -92,7 +104,11 @@ ESQUEMA = {
                     "titulo": {"type": "string"},
                     "descricao": {"type": "string"},
                     "hashtags": {"type": "array", "items": {"type": "string"}},
-                    "narracao": {"type": "string"},
+                    "narracoes": {"type": "array", "items": {
+                        "type": "object",
+                        "properties": {"segundo": {"type": "number"}, "texto": {"type": "string"}},
+                        "required": ["segundo", "texto"], "additionalProperties": False}},
+                    "comentario_final": {"type": "string"},
                     "motivo": {"type": "string"},
                     "momento_chave": {"type": "number"},
                     "abrir_com_pico": {"type": "boolean"},
@@ -101,7 +117,8 @@ ESQUEMA = {
                     "ajuste_fim": {"type": "number"},
                 },
                 "required": ["indice", "aprovado", "nota", "notas", "gancho_texto", "titulo",
-                             "descricao", "hashtags", "narracao", "motivo", "momento_chave",
+                             "descricao", "hashtags", "narracoes", "comentario_final", "motivo",
+                             "momento_chave",
                              "abrir_com_pico", "palavras_chave", "ajuste_inicio", "ajuste_fim"],
                 "additionalProperties": False,
             },
@@ -150,7 +167,7 @@ def sem_ia(candidatos: list[dict], contexto: dict) -> list[dict]:
             "titulo": base[:70], "descricao": f"Momento {i + 1} de: {base}",
             "hashtags": ["shorts", "cortes", "viral"], "motivo": "sem IA: ordenado pelos sinais",
             "gancho": "", "notas": {}, "momento": None, "abrir_com_pico": False,
-            "palavras_chave": [], "narracao": "",
+            "palavras_chave": [], "narracoes": [], "comentario_final": "",
         })
     return resultado
 
@@ -191,6 +208,7 @@ def _pedir(modelo: str, sistema: str, conteudo: list[dict], esquema: dict) -> di
 def _cabecalho(contexto: dict, cfg: dict) -> str:
     return (f"Vídeo: {contexto.get('titulo', '')}\nCanal: {contexto.get('canal', '')}\n"
             f"Idioma dos textos: {cfg['idioma']}\n"
+            f"Nosso canal (onde o corte será publicado): {cfg['cortes']['marca'] or 'sem nome definido'}\n"
             f"Origem: {'live em andamento' if contexto.get('ao_vivo') else 'vídeo gravado'}\n"
             f"Duração permitida do corte: {cfg['cortes']['duracao_min']} a "
             f"{cfg['cortes']['duracao_max']} segundos")
@@ -272,7 +290,11 @@ def avaliar(candidatos: list[dict], contexto: dict, video: str | Path, cfg: dict
             notas={k: max(0, min(100, item["notas"][k])) for k in CRITERIOS},
             momento=momento, abrir_com_pico=item["abrir_com_pico"],
             palavras_chave=item["palavras_chave"][:4],
-            narracao=" ".join(item["narracao"].split()[:18]),
+            # segundos passam a contar do novo início do corte
+            narracoes=[{"segundo": max(0.0, n["segundo"] - ai),
+                        "texto": " ".join(n["texto"].split()[:18])}
+                       for n in item["narracoes"][:3] if n["texto"].strip()],
+            comentario_final=" ".join(item["comentario_final"].split()[:14]),
             motivo=item["motivo"], inicio=max(0.0, c["inicio"] + ai), fim=c["fim"] + af,
         )
         if "inicio_arquivo" in c:

@@ -57,6 +57,8 @@ def main() -> None:
     p.add_argument("--porta", type=int, default=8000)
     p.add_argument("--host", default="127.0.0.1",
                    help="use 0.0.0.0 para acessar de outro aparelho (o painel não tem senha)")
+    p = sub.add_parser("app", help="abre o programa em janela própria")
+    p.add_argument("--porta", type=int, default=8000)
     sub.add_parser("buscar", help="mostra o que a descoberta automática encontra")
     sub.add_parser("auto", help="roda tudo continuamente")
     sub.add_parser("publicar", help="publica os cortes pendentes na fila")
@@ -79,6 +81,9 @@ def main() -> None:
     elif args.cmd == "painel":
         from . import painel
         painel.servir(cfg, banco, args.host, args.porta, args.config)
+    elif args.cmd == "app":
+        from . import app
+        app.abrir(cfg, banco, args.config, args.porta)
     elif args.cmd == "buscar":
         for a in fontes.descobrir(cfg):
             print(f"{'AO VIVO' if a['ao_vivo'] else 'gravado':8} {a['audiencia']:>9}  "

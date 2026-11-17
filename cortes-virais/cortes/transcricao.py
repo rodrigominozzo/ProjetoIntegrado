@@ -100,6 +100,15 @@ def _tempo(t: float) -> str:
     return f"{int(t // 3600)}:{int(t % 3600 // 60):02d}:{t % 60:05.2f}"
 
 
+# Fontes embutidas (licença aberta OFL), no padrão dos canais de cortes: pesadas, sem
+# serifa, legíveis em tela pequena. Valores: (escala do corpo, espaçamento entre letras).
+FONTES = {
+    "Montserrat Black": (1.0, 0), "Montserrat ExtraBold": (1.0, 0), "Poppins ExtraBold": (1.0, 0),
+    "Anton": (1.22, 1), "Bangers": (1.2, 2),
+}
+PASTA_FONTES = Path(__file__).with_name("fontes_tipograficas")
+
+
 def _cor_ass(hexa: str) -> str:
     """#RRGGBB -> &HBBGGRR& (formato de cor do ASS)."""
     h = hexa.lstrip("#")
@@ -110,12 +119,17 @@ def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: i
               credito: str = "", gancho: str = "", posicao: dict | None = None,
               karaoke: bool = True, cor_destaque: str = "#FFE000", marca: str = "",
               palavras_chave: list[str] | None = None, cor_chave: str = "#3CFF7A",
-              narracao: tuple[str, float, float] | None = None) -> str:
+              narracoes: list[tuple[str, float, float]] | None = None,
+              encerramento: tuple[str, float, float] | None = None,
+              fonte: str = "Montserrat Black") -> str:
     """Legendas no estilo de vídeos curtos: blocos de até 3 palavras, com a palavra falada
     em destaque (karaokê), gancho fixo no topo e crédito discreto no rodapé."""
     vertical = altura > largura
     posicao = posicao or {"fala": ("baixo", 0.22 if vertical else 0.08), "gancho": 0.15}
-    tamanho = 78 if vertical else 58
+    # Fontes condensadas pedem corpo maior para ocupar a mesma largura.
+    escala, espaco = FONTES.get(fonte, (1.0, 0))
+    tamanho = int((94 if vertical else 62) * escala)
+    fonte_apoio = "Montserrat ExtraBold"
     onde, fracao = posicao["fala"]
     alinhamento = {"baixo": 2, "meio": 5, "topo": 8}[onde]
     margem = int(altura * fracao)
@@ -126,14 +140,14 @@ def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: i
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour,"
         " Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline,"
         " Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Fala,DejaVu Sans,{tamanho},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,"
-        f"-1,0,0,0,100,100,0,0,1,6,2,{alinhamento},60,60,{margem},1",
+        f"Style: Fala,{fonte},{tamanho},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,"
+        f"0,0,0,0,100,100,{espaco},0,1,{int(tamanho * 0.09)},3,{alinhamento},60,60,{margem},1",
         # Gancho: texto escuro sobre caixa branca, como nos canais de cortes.
-        f"Style: Gancho,DejaVu Sans,{int(tamanho * 0.72)},&H00101010,&H00101010,&H00FFFFFF,"
-        f"&H00FFFFFF,-1,0,0,0,100,100,0,0,3,14,0,8,70,70,{int(altura * posicao['gancho'])},1",
-        f"Style: Credito,DejaVu Sans,{int(tamanho * 0.36)},&H40FFFFFF,&H00FFFFFF,&H00000000,"
+        f"Style: Gancho,{fonte},{int(tamanho * 0.62)},&H00101010,&H00101010,&H00FFFFFF,"
+        f"&H00FFFFFF,0,0,0,0,100,100,0,0,3,14,0,8,70,70,{int(altura * posicao['gancho'])},1",
+        f"Style: Credito,{fonte_apoio},{int(28 if vertical else 24)},&H40FFFFFF,&H00FFFFFF,&H00000000,"
         f"&H80000000,0,0,0,0,100,100,0,0,1,3,1,1,40,40,{int(altura * 0.025)},1",
-        f"Style: Marca,DejaVu Sans,{int(tamanho * 0.42)},&H30FFFFFF,&H00FFFFFF,&H00000000,"
+        f"Style: Marca,{fonte_apoio},{int(34 if vertical else 28)},&H30FFFFFF,&H00FFFFFF,&H00000000,"
         f"&H80000000,-1,0,0,0,100,100,0,0,1,3,1,3,40,40,{int(altura * 0.025)},1",
         "", "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -147,20 +161,24 @@ def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: i
                       f"{{\\fad(120,0)\\fscx85\\fscy85\\t(0,160,\\fscx100\\fscy100)}}{_limpar(gancho)}")
     chaves = {_normal(k) for k in (palavras_chave or [])}
     cor_k = _cor_ass(cor_chave)
-    livre = 0.0  # as falas só voltam à legenda depois que a narração termina
-    if narracao:
-        texto_n, t0_n, dur_n = narracao
+    cobertas: list[tuple[float, float]] = []  # enquanto o narrador fala, a legenda é dele
+    for texto_n, t0_n, dur_n in narracoes or []:
         termos_n = _limpar(texto_n).upper().split()
         grupos = [termos_n[i:i + 3] for i in range(0, len(termos_n), 3)]
         for i, g in enumerate(grupos):  # legenda da narração, em outra cor
             a, b = t0_n + dur_n * i / len(grupos), t0_n + dur_n * (i + 1) / len(grupos)
             linhas.append(f"Dialogue: 1,{_tempo(a)},{_tempo(b)},Fala,,0,0,0,,"
                           f"{{\\c&HFFE9A8&\\i1}}{' '.join(g)}")
-        livre = t0_n + dur_n + 0.15
+        cobertas.append((t0_n - 0.3, t0_n + dur_n + 0.15))
+    if encerramento:  # comentário final do canal, grande e centralizado sobre o quadro congelado
+        texto_f, t0_f, dur_f = encerramento
+        linhas.append(f"Dialogue: 3,{_tempo(t0_f)},{_tempo(t0_f + dur_f)},Fala,,80,80,0,,"
+                      f"{{\\an5\\fad(150,0)\\c&HFFE9A8&}}{_limpar(texto_f)}")
+        cobertas.append((t0_f - 0.1, t0_f + dur_f))
     bloco: list[Palavra] = []
     blocos: list[list[Palavra]] = []
     for p in recorte(palavras, inicio, inicio + duracao):
-        if p[0] - inicio < livre:
+        if any(a <= p[0] - inicio < b for a, b in cobertas):
             continue
         if bloco and (len(bloco) >= 3 or p[0] - bloco[0][0] > 1.4 or p[0] - bloco[-1][1] > 0.6):
             blocos.append(bloco)
