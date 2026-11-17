@@ -28,7 +28,9 @@ PADRAO = {
         "legendas": True,
         "fonte": "Montserrat Black",  # ou Montserrat ExtraBold, Poppins ExtraBold, Anton, Bangers
         "karaoke": True,          # destaca a palavra que está sendo falada
-        "cor_destaque": "#FFE000",
+        "tema": "classico",       # classico | impacto | neon | limpo | personalizado
+        "cor_destaque": "#FFE000",  # usada só no tema personalizado
+        "capa": True,             # gera thumbnail e envia junto com o vídeo
         "gancho": True,           # frase de impacto fixa no topo do vídeo
         "marca": "@GamePlayCortesBR",  # nome do canal, discreto no canto do vídeo
         "altura_max": 1080,
@@ -52,6 +54,7 @@ PADRAO = {
         "pausa_minima": 1.2,       # segundos de silêncio para ser cortado
         "abertura_pico": True,     # permite abrir com 1,5 s do ápice (a IA decide quando)
         "barra_progresso": True,
+        "realce": True,            # acabamento de cor, nitidez e vinheta leve
     },
     "narracao": {
         "ativa": False,            # falas do narrador do canal por cima do corte
@@ -80,6 +83,7 @@ PADRAO = {
     "publicar": {
         "creditar_fonte": True,
         "intervalo_min": 30,  # espaçamento entre posts de vídeos gravados
+        "horarios": "",       # janelas para posts não urgentes, ex.: "11:00-14:00, 18:00-23:30"
         "youtube": {
             "ativo": True,
             "privacidade": "public",
@@ -92,6 +96,7 @@ PADRAO = {
     },
     "auto": {"intervalo_min": 30},
     "monetizacao": {"moeda": "US$"},
+    "limpeza": {"dias": 14},  # apaga do disco os cortes já publicados há mais que isso (0 = nunca)
 }
 
 

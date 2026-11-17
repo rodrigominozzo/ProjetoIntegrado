@@ -106,8 +106,17 @@ class Gerenciador:
                 with self._trava:
                     del self.tarefas[tarefa["id"]]
                 return
-            tarefa.update(titulo=meta["titulo"], canal=meta["canal"], video_id=meta["id"],
-                          status="fila", etapa="Na fila")
+            tarefa.update(titulo=meta["titulo"], canal=meta["canal"], video_id=meta["id"])
+            # Um vídeo já cortado e publicado não é cortado de novo: evita posts repetidos.
+            if not tarefa["teste"] and self.banco.status_video(meta["id"]) == "feito" \
+                    and self.banco.tem_publicados(meta["id"]):
+                if tarefa["origem"] != "manual":
+                    with self._trava:
+                        del self.tarefas[tarefa["id"]]
+                    return
+                raise ValueError("Este vídeo já foi cortado. Para refazer sem publicar de "
+                                 "novo, envie em modo teste.")
+            tarefa.update(status="fila", etapa="Na fila")
             self._fila.submit(self._analisar, tarefa, meta)
         except Exception as e:  # noqa: BLE001
             log.exception("Falha ao identificar %s", tarefa["alvo"])
@@ -171,6 +180,11 @@ class Gerenciador:
                 if time.time() - self._ultima_medida >= 3600:
                     self._ultima_medida = time.time()
                     desempenho.atualizar(self.cfg, self.banco)
+                    ativas = [p for p, nome in publicar.NOMES.items()
+                              if self.cfg["publicar"][nome]["ativo"]]
+                    apagados = self.banco.limpar_antigos(self.cfg["limpeza"]["dias"], ativas)
+                    if apagados:
+                        log.info("Limpeza: %d cortes antigos apagados do disco.", apagados)
                 if time.time() - self._ultima_busca >= self.cfg["auto"]["intervalo_min"] * 60:
                     self._ultima_busca = time.time()
                     self._buscar_nos_canais()
@@ -222,6 +236,7 @@ class Gerenciador:
                 "existe": Path(c["arquivo"]).exists(), "gancho": c["gancho"] or "",
                 "notas": json.loads(c["notas"] or "{}"), "layout": c["layout"] or "",
                 "narracao": c["narracao"] or "",
+                "capa": bool(c["capa"] and Path(c["capa"]).exists()),
             }
             for p in ("yt", "ig"):
                 if c[f"{p}_id"]:
@@ -507,8 +522,14 @@ def _manipulador(ger: Gerenciador):
                 if not corte:
                     return self._json({"erro": "Corte não encontrado."}, 404)
                 return self._arquivo(Path(corte["arquivo"]), "video/mp4")
-            m = re.fullmatch(r"/api/analise/([^/]+)", unquote(rota))
-            if m and m[1] not in {".", ".."}:
+            m = re.fullmatch(r"/capa/(\d+)", rota)
+            if m:
+                corte = ger.banco.corte(int(m[1]))
+                if not corte or not corte["capa"]:
+                    return self._json({"erro": "Capa não encontrada."}, 404)
+                return self._arquivo(Path(corte["capa"]), "image/jpeg")
+            m = re.fullmatch(r"/api/analise/([^/\\]+)", unquote(rota))
+            if m and ".." not in m[1]:
                 arq = Path(ger.cfg["pasta_trabalho"]) / m[1] / "analise.json"
                 return self._arquivo(arq, "application/json; charset=utf-8")
             self._json({"erro": "Não encontrado."}, 404)

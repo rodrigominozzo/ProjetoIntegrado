@@ -165,7 +165,7 @@ def remapear(palavras: list, pedacos: list[dict]) -> list:
 
 
 def grafo(plano: dict, layout: dict, inicio: float, w: int, h: int, tem_audio: bool,
-          largura: int = 1080, altura: int = 1920) -> str:
+          largura: int = 1080, altura: int = 1920, acento: str = "0xFFE000") -> str:
     """filter_complex que monta os pedaços; saídas [vc] (vídeo) e, havendo áudio, [ac]."""
     pedacos = plano["pedacos"]
     n = len(pedacos)
@@ -174,7 +174,7 @@ def grafo(plano: dict, layout: dict, inicio: float, w: int, h: int, tem_audio: b
         partes.append(f"[i{k}]trim=start={p['a'] - inicio:.3f}:end={p['b'] - inicio:.3f},"
                       f"setpts=PTS-STARTPTS[c{k}]")
         partes.append(enquadramento.cadeia(p["vista"], layout, w, h, p["zoom"], f"c{k}", f"v{k}",
-                                           f"s{k}", largura, altura))
+                                           f"s{k}", largura, altura, acento))
     partes.append("".join(f"[v{k}]" for k in range(n)) + f"concat=n={n}:v=1:a=0[vc]")
     if tem_audio:
         # Áudio: só é cortado onde a imagem salta no tempo (pedaços contíguos seguem juntos).

@@ -15,11 +15,12 @@ TAMANHOS = {"auto": (1080, 1920), "vertical_blur": (1080, 1920), "vertical_crop"
 
 # Onde ficam as legendas e o gancho em cada layout (frações da altura).
 POSICOES = {
-    "blur":    {"fala": ("baixo", 0.22), "gancho": 0.15},   # faixas desfocadas acima/abaixo
-    "rosto":   {"fala": ("baixo", 0.24), "gancho": 0.07},
-    "dupla":   {"fala": ("meio", 0.0),   "gancho": 0.04},   # legenda na emenda dos painéis
-    "facecam": {"fala": ("baixo", 0.28), "gancho": 0.03},  # serve à tela dividida e ao close
-    "original": {"fala": ("baixo", 0.08), "gancho": 0.05},
+    # Área segura de Shorts e Reels: nada importante nos ~28% de baixo nem nos ~8% de cima.
+    "blur":    {"fala": ("baixo", 0.27), "gancho": 0.15},   # faixas desfocadas acima/abaixo
+    "rosto":   {"fala": ("baixo", 0.30), "gancho": 0.085},
+    "dupla":   {"fala": ("meio", 0.0),   "gancho": 0.085},  # legenda na emenda dos painéis
+    "facecam": {"fala": ("baixo", 0.30), "gancho": 0.085},  # serve à tela dividida e ao close
+    "original": {"fala": ("baixo", 0.08), "gancho": 0.10},
 }
 
 
@@ -57,6 +58,7 @@ def renderizar(video: str | Path, inicio: float, fim: float, saida: Path, *, for
     saida.parent.mkdir(parents=True, exist_ok=True)
     w, h = enquadramento.dimensoes(video)
     tem_audio = _tem_audio(video)
+    cores = transcricao.tema(cfg_cortes)
 
     # 1. Layout da cena.
     if formato == "auto" and w > h:
@@ -80,7 +82,8 @@ def renderizar(video: str | Path, inicio: float, fim: float, saida: Path, *, for
         energia = sinais.volume_por_segundo(video, inicio, fim - inicio) if tem_audio else None
         plano = edicao.planejar(layout, inicio, fim, palavras=palavras, energia=energia,
                                 momento=momento, abrir_com_pico=abrir_com_pico, cfg=cfg_edicao)
-        video_fc = edicao.grafo(plano, layout, inicio, w, h, tem_audio, largura, altura)
+        video_fc = edicao.grafo(plano, layout, inicio, w, h, tem_audio, largura, altura,
+                                acento=cores["acento"].replace("#", "0x"))
         tipo = layout["tipo"]
     duracao = plano["duracao"]
 
@@ -100,6 +103,10 @@ def renderizar(video: str | Path, inicio: float, fim: float, saida: Path, *, for
 
     # 4. Acabamento: clarão na virada da abertura, encerramento, barra de progresso, legendas.
     antes, depois = [], []  # filtros antes e depois da barra de progresso
+    if cfg_edicao.get("realce", True) and tipo != "original":
+        # Acabamento de cor: um pouco mais de saturação e contraste, nitidez (os recortes
+        # ampliados ficam moles) e vinheta leve para puxar o olhar ao centro.
+        antes.append("eq=saturation=1.12:contrast=1.04,unsharp=5:5:0.6:5:5:0,vignette=PI/7")
     if plano.get("flash"):
         t = plano["flash"]
         antes.append(f"eq=brightness=0.35:enable='between(t,{t - 0.04:.2f},{t + 0.08:.2f})'")
@@ -117,8 +124,7 @@ def renderizar(video: str | Path, inicio: float, fim: float, saida: Path, *, for
         legendas.write_text(transcricao.gerar_ass(
             remapeadas or [], 0, duracao, largura, altura, credito=credito, gancho=gancho,
             marca=marca, posicao=POSICOES[tipo], karaoke=cfg_cortes.get("karaoke", True),
-            cor_destaque=cfg_cortes.get("cor_destaque", "#FFE000"),
-            palavras_chave=palavras_chave, fonte=cfg_cortes.get("fonte", "Montserrat Black"),
+            cores=cores, palavras_chave=palavras_chave, fonte=cfg_cortes.get("fonte", "Montserrat Black"),
             narracoes=[(v["texto"], v["saida"], v["duracao"]) for v in vozes if not v.get("final")],
             encerramento=next(((v["texto"], v["saida"], v["duracao"] + 0.4) for v in vozes
                                if v.get("final")), None),
@@ -127,9 +133,9 @@ def renderizar(video: str | Path, inicio: float, fim: float, saida: Path, *, for
     depois.append("format=yuv420p")
     fc = video_fc + f";[vc]{','.join(antes) or 'null'}[vp]"
     if cfg_edicao.get("barra_progresso", True) and tipo != "original":
-        cor = cfg_cortes.get("cor_destaque", "#FFE000").replace("#", "0x")
-        fc += (f";color=c={cor}:s={largura}x10:r=30[barra];"
-               f"[vp][barra]overlay=x='-w+w*t/{duracao:.3f}':y=H-h:shortest=1[vb]"
+        cor = cores["acento"].replace("#", "0x")  # no topo: o rodapé é coberto pelos aplicativos
+        fc += (f";color=c={cor}:s={largura}x8:r=30[barra];"
+               f"[vp][barra]overlay=x='-w+w*t/{duracao:.3f}':y=0:shortest=1[vb]"
                f";[vb]{','.join(depois)}[v]")
     else:
         fc += f";[vp]{','.join(depois)}[v]"
@@ -164,5 +170,9 @@ def renderizar(video: str | Path, inicio: float, fim: float, saida: Path, *, for
          "-ar", "48000", "-ac", "2", "-movflags", "+faststart", str(saida)],
         check=True, cwd=saida.parent,
     )
-    return {"arquivo": saida, "layout": tipo, "duracao": duracao,
+    m_saida = None
+    if plano.get("momento") is not None and tipo != "original":
+        m_saida = edicao.tempo_de_saida(plano, plano["momento"])
+    return {"arquivo": saida, "layout": tipo, "duracao": duracao, "cena": layout,
+            "dimensoes": (w, h), "momento": plano.get("momento"), "momento_saida": m_saida,
             "planos": [p["vista"] for p in plano["pedacos"]]}

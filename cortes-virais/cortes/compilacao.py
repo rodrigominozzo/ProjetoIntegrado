@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import fontes, narracao, render
+from . import capa, fontes, narracao, render, transcricao
 from .banco import Banco
 
 log = logging.getLogger(__name__)
@@ -114,11 +114,21 @@ def montar(video: Path, escolhidos: list[dict], meta: dict, cfg: dict, banco: Ba
                  + "\n".join(f"{_marca(tc)} {nome}" for tc, nome in capitulos))
     if cfg["publicar"]["creditar_fonte"] and meta.get("url"):
         descricao += f"\n\nFonte: {canal} — {meta['url']}"
+    melhor = ordem[-1]
+    arq_capa = ""
+    if cfg["cortes"]["capa"]:
+        m = melhor.get("momento")
+        ini_m = melhor.get("inicio_arquivo", melhor["inicio"])
+        arq_capa = capa.gerar(
+            video, ini_m + (m if m is not None else 3), pasta / "compilacao.capa.jpg",
+            melhor.get("texto_capa") or melhor.get("gancho") or melhor["titulo"], cena=None,
+            dimensoes=(1920, 1080), cores=transcricao.tema(cfg["cortes"]),
+            marca=cfg["cortes"]["marca"], horizontal=True, selo=f"TOP {n}") or ""
     marcas = list(dict.fromkeys(h for c in ordem for h in c["hashtags"]))[:8]
     corte_id = banco.novo_corte(
         video_id=meta["id"], origem="compilacao", inicio=0, fim=fontes.duracao_arquivo(saida),
         nota=max(c["nota"] for c in ordem), titulo=f"Top {n} momentos — {meta['titulo']}"[:95],
         descricao=descricao, hashtags=marcas, arquivo=saida, teste=bool(meta.get("teste")),
-        layout="compilacao", narracao="Contagem regressiva narrada")
+        layout="compilacao", narracao="Contagem regressiva narrada", capa=arq_capa)
     log.info("Compilação %s pronta: %d momentos, %s.", corte_id, n, _marca(t))
     return corte_id

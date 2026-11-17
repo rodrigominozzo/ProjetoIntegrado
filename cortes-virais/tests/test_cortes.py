@@ -360,3 +360,71 @@ def test_compilacao_e_campanha(video, tmp_path):
     banco.publicado(cid, "yt", "abc")
     banco.medir("yt", "abc", vistas=20000, curtidas=10)
     assert banco.vistas_por_canal()["Canal X"] == 20000       # 20 mil × 1,50 = 30 de estimativa
+
+
+def test_capa_tema_e_area_segura(video, tmp_path):
+    from cortes import capa
+
+    cfg = _cfg(tmp_path)
+    cfg["cortes"].update(tema="impacto", marca="@GamePlayCortesBR")
+    banco = Banco(tmp_path / "e.db")
+    meta = {"id": "v", "titulo": "Live", "canal": "Canal X", "canal_id": "", "url": ""}
+    c = {"inicio": 60.0, "fim": 70.0, "nota": 80, "titulo": "Título do corte", "descricao": "D",
+         "hashtags": [], "gancho": "Ele não esperava *essa reação*", "texto_capa": "DEU RUIM",
+         "momento": 4.0}
+    falas = [(60 + i * 0.5, 60.4 + i * 0.5, f"p{i}") for i in range(18)]
+    cid = vod.finalizar(c, video, meta, cfg, banco, tmp_path / "v", "vod", falas)
+    corte = banco.corte(cid)
+    assert corte["gancho"] == "Ele não esperava essa reação"         # asteriscos só no vídeo
+    assert corte["capa_ms"] == 4000 and corte["capa"].endswith(".capa.jpg")
+    dims = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height",
+                           "-of", "csv=p=0", corte["capa"]], capture_output=True, text=True).stdout
+    assert dims.strip() == "1080,1920"
+    ass = (tmp_path / "v" / "corte_000060.ass").read_text()
+    assert "@GamePlayCortesBR   ·   Créditos: Canal X" in ass          # assinatura no topo
+    assert "&H2B22E8" in ass                                           # caixa vermelha do tema
+    estilo = next(l for l in ass.splitlines() if l.startswith("Style: Fala"))
+    margens = [int(x) for x in estilo.split(",")[19:22]]
+    assert margens[0] >= 120 and margens[1] >= 120 and margens[2] >= 1920 * 0.25   # área segura
+    assert capa._linhas("um dois três quatro cinco") == ["UM DOIS", "TRÊS QUATRO"]
+
+
+def test_horarios_limpeza_e_duplicados(tmp_path):
+    from cortes import painel, publicar
+
+    cfg = _cfg(tmp_path)
+    meio_dia = time.mktime((2026, 11, 17, 12, 30, 0, 0, 0, -1))
+    madrugada = time.mktime((2026, 11, 17, 3, 0, 0, 0, 0, -1))
+    assert publicar.no_horario(cfg, madrugada)                         # sem janelas: sempre
+    cfg["publicar"]["horarios"] = "11:00-14:00, 22:00-02:00"
+    assert publicar.no_horario(cfg, meio_dia) and not publicar.no_horario(cfg, madrugada)
+    assert publicar.no_horario(cfg, time.mktime((2026, 11, 17, 1, 0, 0, 0, 0, -1)))  # vira o dia
+    with pytest.raises(ValueError):
+        publicar.janelas("das 11 às 14")
+
+    banco = Banco(tmp_path / "e.db")
+    arq = tmp_path / "corte_000001.mp4"
+    for sufixo in (".mp4", ".ass", ".capa.jpg"):
+        arq.with_suffix(sufixo).write_text("x")
+    cid = banco.novo_corte(video_id="v1", origem="vod", inicio=0, fim=30, nota=80, titulo="T",
+                           descricao="", hashtags=[], arquivo=arq)
+    assert banco.limpar_antigos(14, ["yt", "ig"]) == 0                 # ainda não publicado
+    banco.publicado(cid, "yt", "a")
+    banco._exec("UPDATE cortes SET yt_em=? WHERE id=?", (time.time() - 20 * 86400, cid))
+    assert banco.limpar_antigos(14, ["yt", "ig"]) == 0                 # falta o Instagram
+    assert banco.limpar_antigos(14, ["yt"]) == 1 and not arq.exists()
+    assert not arq.with_suffix(".capa.jpg").exists() and banco.corte(cid) is not None
+
+    # vídeo já cortado e publicado não é cortado de novo fora do modo teste
+    banco.marcar_video("v1", "T", "C", "feito")
+    ger = painel.Gerenciador(cfg, banco)
+    tarefa = {"id": "t9", "alvo": "x", "teste": False, "origem": "manual", "status": "identificando"}
+    ger.tarefas["t9"] = tarefa
+    original = painel.fontes.info
+    painel.fontes.info = lambda alvo: {"id": "v1", "titulo": "T", "canal": "C", "canal_id": "",
+                                       "ao_vivo": False, "duracao": 60, "replay": [], "url": ""}
+    try:
+        ger._identificar(tarefa, False)
+    finally:
+        painel.fontes.info = original
+    assert tarefa["status"] == "erro" and "modo teste" in tarefa["erro"]

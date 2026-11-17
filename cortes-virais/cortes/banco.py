@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS opcoes (chave TEXT PRIMARY KEY, valor TEXT);
 # Colunas acrescentadas depois da primeira versão.
 MIGRACOES = ["teste INTEGER DEFAULT 0", "yt_link TEXT", "ig_link TEXT", "gancho TEXT",
              "notas TEXT", "layout TEXT", "yt_vistas INTEGER", "yt_curtidas INTEGER",
-             "ig_vistas INTEGER", "ig_curtidas INTEGER", "narracao TEXT"]
+             "ig_vistas INTEGER", "ig_curtidas INTEGER", "narracao TEXT", "capa TEXT",
+             "capa_ms INTEGER"]
 # Campanha paga por visualização e comprovante de autorização, por canal.
 MIGRACOES_CANAIS = ["valor_mil REAL DEFAULT 0", "texto_obrigatorio TEXT DEFAULT ''",
                     "autorizacao TEXT DEFAULT ''"]
@@ -72,14 +73,14 @@ class Banco:
     # --- cortes ---
     def novo_corte(self, *, video_id, origem, inicio, fim, nota, titulo, descricao,
                    hashtags, arquivo, urgente=False, teste=False, gancho="", notas=None,
-                   layout="", narracao="") -> int:
+                   layout="", narracao="", capa="", capa_ms=None) -> int:
         cur = self._exec(
             "INSERT INTO cortes (video_id, origem, inicio, fim, nota, titulo, descricao, hashtags,"
-            " arquivo, urgente, teste, gancho, notas, layout, narracao, criado)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " arquivo, urgente, teste, gancho, notas, layout, narracao, capa, capa_ms, criado)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (video_id, origem, inicio, fim, nota, titulo, descricao, json.dumps(hashtags),
              str(arquivo), int(urgente), int(teste), gancho, json.dumps(notas or {}), layout,
-             narracao, time.time()),
+             narracao, str(capa or ""), capa_ms, time.time()),
         )
         return cur.lastrowid
 
@@ -123,10 +124,34 @@ class Banco:
         c = self.corte(corte_id)
         if not c or c["yt_id"] or c["ig_id"]:
             return False
-        Path(c["arquivo"]).unlink(missing_ok=True)
-        Path(c["arquivo"]).with_suffix(".ass").unlink(missing_ok=True)
+        self.apagar_arquivos(c)
         self._exec("DELETE FROM cortes WHERE id=?", (corte_id,))
         return True
+
+    @staticmethod
+    def apagar_arquivos(c) -> None:
+        base = Path(c["arquivo"])
+        for arq in [base, *base.parent.glob(base.stem + ".*")]:
+            arq.unlink(missing_ok=True)
+
+    def limpar_antigos(self, dias: int, plataformas: list[str]) -> int:
+        """Apaga do disco os arquivos de cortes já publicados em todas as plataformas ativas
+        há mais de `dias`. Os registros ficam."""
+        if dias <= 0 or not plataformas:
+            return 0
+        limite = time.time() - dias * 86400
+        feitos = 0
+        for c in self._linhas("SELECT * FROM cortes WHERE teste=0"):
+            alvos = [p for p in plataformas if not (p == "ig" and c["origem"] == "compilacao")]
+            if alvos and all(c[f"{p}_em"] and c[f"{p}_em"] < limite for p in alvos) \
+                    and Path(c["arquivo"]).exists():
+                self.apagar_arquivos(c)
+                feitos += 1
+        return feitos
+
+    def tem_publicados(self, video_id: str) -> bool:
+        return bool(self._linhas(
+            "SELECT 1 FROM cortes WHERE video_id=? AND teste=0 LIMIT 1", (video_id,)))
 
     def remover_testes(self, video_id: str) -> None:
         for c in self._linhas("SELECT id FROM cortes WHERE video_id=? AND teste=1", (video_id,)):

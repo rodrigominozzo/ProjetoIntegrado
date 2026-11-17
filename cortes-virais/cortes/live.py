@@ -192,7 +192,10 @@ class MonitorLive:
         finally:
             if captura.poll() is None:
                 captura.terminate()
-                captura.wait(timeout=10)
+                try:
+                    captura.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    captura.kill()
             if hasattr(self.chat, "parar"):
                 self.chat.parar()
             for t in self._trabalhos:

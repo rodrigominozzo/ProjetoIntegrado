@@ -44,8 +44,20 @@ SECOES = [
                                       "Poppins ExtraBold", "Anton", "Bangers")]}),
         ("cortes.karaoke", "booleano", "Destacar a palavra falada",
          "A palavra dita no momento muda de cor, como nos vídeos curtos mais vistos.", {}),
-        ("cortes.cor_destaque", "cor", "Cor de destaque",
-         "Usada na palavra falada e na barra de progresso.", {}),
+        ("cortes.tema", "escolha", "Tema de cores",
+         "Define a cor da palavra falada, das palavras-chave, da caixa do gancho e dos "
+         "detalhes. Manter um tema só dá identidade ao canal.",
+         {"opcoes": [["classico", "Clássico — amarelo e verde, gancho em caixa branca"],
+                     ["impacto", "Impacto — gancho em caixa vermelha"],
+                     ["neon", "Neon — ciano e rosa, gancho em caixa preta"],
+                     ["limpo", "Limpo — amarelo único, gancho em caixa preta"],
+                     ["personalizado", "Personalizado — usa a cor abaixo"]]}),
+        ("cortes.cor_destaque", "cor", "Cor do tema personalizado",
+         "Só vale quando o tema é “Personalizado”.", {}),
+        ("cortes.capa", "booleano", "Gerar capa (thumbnail)",
+         "Cria uma capa com o melhor quadro e de 1 a 3 palavras grandes, enviada ao YouTube. "
+         "No Instagram, a capa é o quadro do momento-chave. O YouTube só aceita capa própria "
+         "em canal verificado por telefone.", {}),
         ("cortes.gancho", "booleano", "Gancho na tela",
          "Frase curta escrita pela IA, fixa no topo, para despertar curiosidade.", {}),
         ("cortes.marca", "texto", "Nome do seu canal no vídeo",
@@ -70,7 +82,9 @@ SECOES = [
          "Quando o começo é morno e o ápice é forte, a IA pode abrir com 1,5 s do melhor "
          "momento antes de voltar ao início.", {}),
         ("edicao.barra_progresso", "booleano", "Barra de progresso",
-         "Linha fina no rodapé que avança com o vídeo; ajuda a pessoa a ficar até o fim.", {}),
+         "Linha fina no topo que avança com o vídeo; ajuda a pessoa a ficar até o fim.", {}),
+        ("edicao.realce", "booleano", "Acabamento de cor",
+         "Um pouco mais de saturação, contraste e nitidez, com vinheta leve nas bordas.", {}),
     ]),
     ("Narração do canal", "Uma frase de abertura dita por uma voz sintética, escrita pela IA: "
      "contexto e um olhar próprio sobre o trecho. A voz roda no seu computador, sem custo.", [
@@ -148,6 +162,12 @@ SECOES = [
         ("publicar.intervalo_min", "inteiro", "Minutos entre posts de vídeos gravados",
          "Espalha as postagens ao longo do dia. Cortes de live saem na hora.",
          {"min": 0, "max": 1440}),
+        ("publicar.horarios", "texto", "Horários de postagem",
+         "Janelas em que os cortes de vídeos gravados podem sair, como 11:00-14:00, "
+         "18:00-23:30. Vazio: qualquer hora. Cortes de live saem sempre na hora.", {}),
+        ("limpeza.dias", "inteiro", "Apagar arquivos de cortes publicados após (dias)",
+         "Libera espaço em disco. O registro e os números do corte continuam no painel. "
+         "0 nunca apaga.", {"min": 0, "max": 365}),
         ("auto.intervalo_min", "inteiro", "Minutos entre buscas nos canais acompanhados", "",
          {"min": 5, "max": 1440}),
         ("compilacao.ativa", "booleano", "Montar a compilação “Top N” de cada vídeo",
@@ -225,6 +245,9 @@ def salvar(cfg: dict, valores: dict, caminho: str | Path) -> None:
             raise ValueError(f"Configuração desconhecida: {chave}")
         _, tipo, rotulo, _, extra = campos[chave]
         novos[chave] = _validar(tipo, rotulo, valor, extra)
+    if novos.get("publicar.horarios"):
+        from .publicar import janelas
+        janelas(novos["publicar.horarios"])  # valida o formato
     minimo = novos.get("cortes.duracao_min", cfg["cortes"]["duracao_min"])
     maximo = novos.get("cortes.duracao_max", cfg["cortes"]["duracao_max"])
     if minimo > maximo:

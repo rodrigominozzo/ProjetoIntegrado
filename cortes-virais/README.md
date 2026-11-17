@@ -47,11 +47,26 @@ pela IA, ou o pico de volume), o sistema monta uma sequência de planos:
   momento-chave; pausas longas de fala são removidas.
 - **Abertura pelo ápice:** quando o começo é morno, a IA pode abrir com 1,5 s do melhor
   momento antes de voltar ao início.
+- **Área segura:** legendas, gancho e assinatura ficam fora do rodapé e da lateral
+  direita, que os aplicativos cobrem com título, descrição e botões. A barra de progresso
+  e a assinatura do canal ficam no topo.
+- **Temas de cores:** clássico, impacto, neon, limpo ou personalizado. O tema define a
+  cor da palavra falada, das palavras-chave, da caixa do gancho e da divisória da tela
+  dividida. A palavra forte do gancho sai em outra cor.
+- **Acabamento de cor:** saturação, contraste e nitidez levemente reforçados, com vinheta.
 - **Tipografia:** fontes pesadas e modernas embutidas no projeto (Montserrat Black por
   padrão; também Montserrat ExtraBold, Poppins ExtraBold, Anton e Bangers), trocáveis na
   aba Configurações.
 - **Acabamento:** gancho com entrada animada, legenda karaokê com palavras-chave em
   destaque, barra de progresso, nome do canal no canto.
+
+### Capas (thumbnails)
+
+Cada corte ganha uma capa feita do quadro do momento-chave: rosto ou ação em primeiro
+plano, cor reforçada e de 1 a 3 palavras enormes em duas cores, escritas pela IA. No
+YouTube a capa é enviada junto com o vídeo (o canal precisa estar verificado por
+telefone); no Instagram, a capa é o próprio quadro do momento-chave. No painel, as capas
+aparecem como imagem de cada corte.
 
 ### Narração do canal (opcional)
 

@@ -130,7 +130,7 @@ VISTA_BASE = {"rosto": "rosto", "dupla": "dupla", "facecam": "dividido", "blur":
 
 
 def cadeia(vista: str, layout: dict, w: int, h: int, zoom: float, ent: str, sai: str, p: str,
-           largura: int = 1080, altura: int = 1920) -> str:
+           largura: int = 1080, altura: int = 1920, acento: str = "0xFFE000") -> str:
     """Filtros que levam o fluxo [ent] ao quadro vertical [sai] na vista pedida.
 
     Vistas: rosto (9:16 no rosto), reacao (close no rosto da facecam), jogo/preencher
@@ -159,16 +159,18 @@ def cadeia(vista: str, layout: dict, w: int, h: int, zoom: float, ent: str, sai:
                 f"[{p}a]{_caixa(a['cx'] * w, a['cy'] * h + ch * 0.12, cw, ch, w, h)},"
                 f"scale={largura}:{meia},setsar=1[{p}t];"
                 f"[{p}b]{_caixa(b['cx'] * w, b['cy'] * h + ch * 0.12, cw, ch, w, h)},"
-                f"scale={largura}:{meia},setsar=1[{p}u];[{p}t][{p}u]vstack[{sai}]")
+                f"scale={largura}:{meia},setsar=1[{p}u];[{p}t][{p}u]vstack,"
+                f"drawbox=x=0:y={meia - 4}:w=iw:h=8:color={acento}:t=fill[{sai}]")
     if vista == "dividido" and r:
         topo = altura // 3
         cw = min(r["w"] * w * 3.4, w)
         ch = cw * topo / largura
-        cam = _caixa(r["cx"] * w, r["cy"] * h + ch * 0.08, cw, ch, w, h)
+        # rosto na parte de baixo do painel: o topo fica livre para o gancho
+        cam = _caixa(r["cx"] * w, r["cy"] * h - ch * 0.12, cw, ch, w, h)
         jogo = _caixa(w / 2, h / 2, h * largura / (altura - topo), h, w, h)
         return (f"[{ent}]split[{p}a][{p}b];[{p}a]{cam},scale={largura}:{topo},setsar=1[{p}t];"
                 f"[{p}b]{jogo},scale={largura}:{altura - topo},setsar=1[{p}u];"
-                f"[{p}t][{p}u]vstack[{sai}]")
+                f"[{p}t][{p}u]vstack,drawbox=x=0:y={topo - 4}:w=iw:h=8:color={acento}:t=fill[{sai}]")
     # blur: vídeo inteiro ao centro sobre fundo desfocado
     return (f"[{ent}]split[{p}a][{p}b];"
             f"[{p}a]scale={largura}:{altura}:force_original_aspect_ratio=increase,"

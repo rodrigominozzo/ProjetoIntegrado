@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import (chat, compilacao, desempenho, fontes, ia, narracao, render, sinais,
+from . import (capa, chat, compilacao, desempenho, fontes, ia, narracao, render, sinais,
                transcricao)
 from .banco import Banco
 
@@ -34,6 +34,16 @@ def finalizar(c: dict, video: Path, contexto: dict, cfg: dict, banco: Banco, pas
         cfg_cortes=cfg["cortes"], cfg_edicao=cfg["edicao"],
     )
     layout = feito["layout"]
+    arq_capa, capa_ms = "", None
+    if cfg["cortes"]["capa"] and layout != "original":
+        instante = feito["momento"] if feito["momento"] is not None else ini + (fim - ini) * 0.4
+        texto = c.get("texto_capa") or c.get("gancho") or " ".join(c["titulo"].split()[:3])
+        arq_capa = capa.gerar(video, instante, saida.with_suffix(".capa.jpg"), texto,
+                              cena=feito["cena"], dimensoes=feito["dimensoes"],
+                              cores=transcricao.tema(cfg["cortes"]),
+                              marca=cfg["cortes"]["marca"]) or ""
+        if feito["momento_saida"] is not None:  # no Instagram, a capa é este quadro do vídeo
+            capa_ms = int(feito["momento_saida"] * 1000)
     descricao = c["descricao"]
     if creditar and contexto.get("url"):
         sep = "&" if "?" in contexto["url"] else "?"
@@ -44,7 +54,8 @@ def finalizar(c: dict, video: Path, contexto: dict, cfg: dict, banco: Banco, pas
     corte_id = banco.novo_corte(
         video_id=contexto["id"], origem=origem, inicio=c["inicio"], fim=c["fim"], nota=c["nota"],
         titulo=c["titulo"], descricao=descricao, hashtags=c["hashtags"], arquivo=saida,
-        urgente=urgente, teste=bool(contexto.get("teste")), gancho=c.get("gancho", ""),
+        urgente=urgente, teste=bool(contexto.get("teste")),
+        gancho=c.get("gancho", "").replace("*", ""), capa=arq_capa, capa_ms=capa_ms,
         notas=c.get("notas"), layout=layout, narracao=" / ".join([f["texto"] for f in falas] + ([final["texto"]] if final else [])))
     log.info("Corte %s pronto: [%.0fs–%.0fs] nota %.0f — %s", corte_id, c["inicio"], c["fim"],
              c["nota"], c["titulo"])
@@ -154,7 +165,7 @@ def processar(alvo: str, cfg: dict, banco: Banco, *, chat_arquivo: str | None = 
         "candidatos": [{
             "inicio": round(c["inicio"], 1), "fim": round(c["fim"], 1), "nota": c["nota"],
             "aprovado": c["aprovado"], "escolhido": c in escolhidos, "titulo": c["titulo"],
-            "motivo": c["motivo"], "gancho": c.get("gancho", ""), "notas": c.get("notas") or {},
+            "motivo": c["motivo"], "gancho": c.get("gancho", "").replace("*", ""), "notas": c.get("notas") or {},
             "transcricao": c.get("transcricao", "")[:400],
         } for c in sorted(avaliados, key=lambda c: c["inicio"])],
     }, ensure_ascii=False), encoding="utf-8")

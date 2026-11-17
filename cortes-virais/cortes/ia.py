@@ -34,12 +34,16 @@ A nota geral (0 a 100) é o seu julgamento do potencial de viralização, não a
 Escreva, no idioma pedido:
 - gancho_texto: frase de até 45 caracteres que fica fixa no topo do vídeo. Deve abrir uma
   curiosidade sobre o que vai acontecer sem entregar o desfecho, e ser verdadeira. Pense em
-  três opções e devolva a mais forte.
+  três opções e devolva a mais forte. Marque entre asteriscos a palavra ou o par de
+  palavras mais forte, que sai em outra cor: "Ele não esperava *essa reação*".
 - titulo: até 70 caracteres, fiel ao trecho, com as palavras que alguém buscaria (nome da
   pessoa, jogo, assunto); sem clickbait enganoso e sem caixa alta contínua.
 - descricao: 1 ou 2 frases com contexto e, no fim, um único convite à ação (por exemplo,
   seguir o nosso canal, citando o nome dele). Um só: vários pedidos juntos fazem a pessoa ignorar todos.
 - hashtags: de 3 a 6, sem o '#', misturando o tema específico e o geral.
+- texto_capa: de 1 a 3 palavras para a capa (thumbnail), lidas de relance: a emoção ou o
+  fato central do trecho, como "NÃO ACREDITO", "DEU RUIM" ou "1 CONTRA 4". Não repita o
+  título nem o gancho.
 
 Narração do canal (é a contribuição original do canal sobre o trecho; uma voz a diz por
 cima do vídeo). Escreva como os narradores dos grandes canais de cortes: fala de gente,
@@ -101,6 +105,7 @@ ESQUEMA = {
                         "required": list(CRITERIOS), "additionalProperties": False,
                     },
                     "gancho_texto": {"type": "string"},
+                    "texto_capa": {"type": "string"},
                     "titulo": {"type": "string"},
                     "descricao": {"type": "string"},
                     "hashtags": {"type": "array", "items": {"type": "string"}},
@@ -116,7 +121,7 @@ ESQUEMA = {
                     "ajuste_inicio": {"type": "number"},
                     "ajuste_fim": {"type": "number"},
                 },
-                "required": ["indice", "aprovado", "nota", "notas", "gancho_texto", "titulo",
+                "required": ["indice", "aprovado", "nota", "notas", "gancho_texto", "texto_capa", "titulo",
                              "descricao", "hashtags", "narracoes", "comentario_final", "motivo",
                              "momento_chave",
                              "abrir_com_pico", "palavras_chave", "ajuste_inicio", "ajuste_fim"],
@@ -166,7 +171,7 @@ def sem_ia(candidatos: list[dict], contexto: dict) -> list[dict]:
             **c, "aprovado": True, "nota": round(min(99.0, 50 + 25 * c.get("pontuacao", 0)), 1),
             "titulo": base[:70], "descricao": f"Momento {i + 1} de: {base}",
             "hashtags": ["shorts", "cortes", "viral"], "motivo": "sem IA: ordenado pelos sinais",
-            "gancho": "", "notas": {}, "momento": None, "abrir_com_pico": False,
+            "gancho": "", "texto_capa": "", "notas": {}, "momento": None, "abrir_com_pico": False,
             "palavras_chave": [], "narracoes": [], "comentario_final": "",
         })
     return resultado
@@ -286,7 +291,8 @@ def avaliar(candidatos: list[dict], contexto: dict, video: str | Path, cfg: dict
             aprovado=item["aprovado"], nota=float(max(0, min(100, item["nota"]))),
             titulo=item["titulo"].strip()[:90], descricao=item["descricao"].strip(),
             hashtags=[h.lstrip("#").replace(" ", "") for h in item["hashtags"]][:6],
-            gancho=item["gancho_texto"].strip()[:60],
+            gancho=item["gancho_texto"].strip()[:64],
+            texto_capa=" ".join(item["texto_capa"].split()[:4]),
             notas={k: max(0, min(100, item["notas"][k])) for k in CRITERIOS},
             momento=momento, abrir_com_pico=item["abrir_com_pico"],
             palavras_chave=item["palavras_chave"][:4],

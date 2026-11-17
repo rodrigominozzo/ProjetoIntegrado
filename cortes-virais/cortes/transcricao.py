@@ -115,24 +115,61 @@ def _cor_ass(hexa: str) -> str:
     return f"&H{h[4:6]}{h[2:4]}{h[0:2]}&".upper()
 
 
+# Temas visuais: cores da palavra falada, das palavras-chave e da caixa do gancho.
+TEMAS = {
+    "classico": {"destaque": "#FFE000", "chave": "#3CFF7A", "gancho_fundo": "#FFFFFF",
+                 "gancho_texto": "#101010", "gancho_enfase": "#E8222B", "acento": "#FFE000"},
+    "impacto": {"destaque": "#FFE000", "chave": "#FF5A4A", "gancho_fundo": "#E8222B",
+                "gancho_texto": "#FFFFFF", "gancho_enfase": "#FFE000", "acento": "#E8222B"},
+    "neon": {"destaque": "#22E6FF", "chave": "#FF4FD8", "gancho_fundo": "#101014",
+             "gancho_texto": "#FFFFFF", "gancho_enfase": "#22E6FF", "acento": "#22E6FF"},
+    "limpo": {"destaque": "#FFD400", "chave": "#FFD400", "gancho_fundo": "#101014",
+              "gancho_texto": "#FFFFFF", "gancho_enfase": "#FFD400", "acento": "#FFFFFF"},
+}
+
+
+def tema(cfg_cortes: dict) -> dict:
+    """Cores em uso. O tema "personalizado" parte do clássico com a cor de destaque escolhida."""
+    nome = cfg_cortes.get("tema", "classico")
+    if nome in TEMAS:
+        return dict(TEMAS[nome])
+    cor = cfg_cortes.get("cor_destaque", "#FFE000")
+    return {**TEMAS["classico"], "destaque": cor, "acento": cor}
+
+
+def _enfase(texto: str, cor_enfase: str, cor_texto: str) -> str:
+    """Colore os trechos entre *asteriscos* (a palavra forte do gancho)."""
+    partes = _limpar(texto).split("*")
+    if len(partes) < 3:
+        return "".join(partes)
+    return "".join(f"{{\\c{_cor_ass(cor_enfase)}}}{p}{{\\c{_cor_ass(cor_texto)}}}" if k % 2 else p
+                   for k, p in enumerate(partes))
+
+
 def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: int, altura: int,
               credito: str = "", gancho: str = "", posicao: dict | None = None,
               karaoke: bool = True, cor_destaque: str = "#FFE000", marca: str = "",
               palavras_chave: list[str] | None = None, cor_chave: str = "#3CFF7A",
               narracoes: list[tuple[str, float, float]] | None = None,
               encerramento: tuple[str, float, float] | None = None,
-              fonte: str = "Montserrat Black") -> str:
+              fonte: str = "Montserrat Black", cores: dict | None = None) -> str:
     """Legendas no estilo de vídeos curtos: blocos de até 3 palavras, com a palavra falada
-    em destaque (karaokê), gancho fixo no topo e crédito discreto no rodapé."""
+    em destaque (karaokê), gancho fixo no topo e assinatura do canal acima dele.
+
+    Tudo fica dentro da área segura de Shorts e Reels: longe do rodapé (título e
+    descrição do aplicativo) e da lateral direita (botões)."""
     vertical = altura > largura
-    posicao = posicao or {"fala": ("baixo", 0.22 if vertical else 0.08), "gancho": 0.15}
+    cores = cores or {**TEMAS["classico"], "destaque": cor_destaque, "chave": cor_chave}
+    cor_destaque, cor_chave = cores["destaque"], cores["chave"]
+    posicao = posicao or {"fala": ("baixo", 0.27 if vertical else 0.08), "gancho": 0.15}
     # Fontes condensadas pedem corpo maior para ocupar a mesma largura.
     escala, espaco = FONTES.get(fonte, (1.0, 0))
-    tamanho = int((94 if vertical else 62) * escala)
+    tamanho = int((86 if vertical else 62) * escala)
     fonte_apoio = "Montserrat ExtraBold"
     onde, fracao = posicao["fala"]
     alinhamento = {"baixo": 2, "meio": 5, "topo": 8}[onde]
     margem = int(altura * fracao)
+    lateral = 130 if vertical else 60
     linhas = [
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {largura}", f"PlayResY: {altura}",
         "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
@@ -141,24 +178,24 @@ def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: i
         " Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline,"
         " Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         f"Style: Fala,{fonte},{tamanho},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,"
-        f"0,0,0,0,100,100,{espaco},0,1,{int(tamanho * 0.09)},3,{alinhamento},60,60,{margem},1",
-        # Gancho: texto escuro sobre caixa branca, como nos canais de cortes.
-        f"Style: Gancho,{fonte},{int(tamanho * 0.62)},&H00101010,&H00101010,&H00FFFFFF,"
-        f"&H00FFFFFF,0,0,0,0,100,100,0,0,3,14,0,8,70,70,{int(altura * posicao['gancho'])},1",
-        f"Style: Credito,{fonte_apoio},{int(28 if vertical else 24)},&H40FFFFFF,&H00FFFFFF,&H00000000,"
-        f"&H80000000,0,0,0,0,100,100,0,0,1,3,1,1,40,40,{int(altura * 0.025)},1",
-        f"Style: Marca,{fonte_apoio},{int(34 if vertical else 28)},&H30FFFFFF,&H00FFFFFF,&H00000000,"
-        f"&H80000000,-1,0,0,0,100,100,0,0,1,3,1,3,40,40,{int(altura * 0.025)},1",
+        f"0,0,0,0,100,100,{espaco},0,1,{int(tamanho * 0.09)},3,{alinhamento},{lateral},{lateral},{margem},1",
+        # Gancho: texto sobre caixa de cor sólida, como nos canais de cortes.
+        f"Style: Gancho,{fonte},{int(tamanho * 0.66)},{_cor_ass(cores['gancho_texto'])[:-1]},"
+        f"&H00101010,{_cor_ass(cores['gancho_fundo'])[:-1]},"
+        f"{_cor_ass(cores['gancho_fundo'])[:-1]},0,0,0,0,100,100,0,0,3,16,0,8,90,90,"
+        f"{int(altura * posicao['gancho'])},1",
+        f"Style: Marca,{fonte_apoio},{int(30 if vertical else 26)},&H20FFFFFF,&H00FFFFFF,&H00000000,"
+        f"&H80000000,0,0,0,0,100,100,1,0,1,3,1,8,40,40,{int(altura * 0.038)},1",
         "", "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
-    if credito:
-        linhas.append(f"Dialogue: 0,{_tempo(0)},{_tempo(duracao)},Credito,,0,0,0,,{_limpar(credito)}")
-    if marca:
-        linhas.append(f"Dialogue: 0,{_tempo(0)},{_tempo(duracao)},Marca,,0,0,0,,{_limpar(marca)}")
+    assinatura = "   ·   ".join(_limpar(x) for x in (marca, credito) if x)
+    if assinatura:  # no topo, ao centro: o rodapé fica coberto pela interface dos aplicativos
+        linhas.append(f"Dialogue: 0,{_tempo(0)},{_tempo(duracao)},Marca,,0,0,0,,{assinatura}")
     if gancho:  # entra com um leve "pop" para chamar o olhar no primeiro instante
         linhas.append(f"Dialogue: 2,{_tempo(0)},{_tempo(duracao)},Gancho,,0,0,0,,"
-                      f"{{\\fad(120,0)\\fscx85\\fscy85\\t(0,160,\\fscx100\\fscy100)}}{_limpar(gancho)}")
+                      f"{{\\fad(120,0)\\fscx85\\fscy85\\t(0,160,\\fscx100\\fscy100)}}"
+                      f"{_enfase(gancho, cores['gancho_enfase'], cores['gancho_texto'])}")
     chaves = {_normal(k) for k in (palavras_chave or [])}
     cor_k = _cor_ass(cor_chave)
     cobertas: list[tuple[float, float]] = []  # enquanto o narrador fala, a legenda é dele

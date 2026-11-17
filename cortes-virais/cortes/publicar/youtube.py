@@ -1,7 +1,10 @@
 """Upload para o YouTube (Shorts) pela YouTube Data API v3 com OAuth."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 ESCOPOS = ["https://www.googleapis.com/auth/youtube.upload",
            "https://www.googleapis.com/auth/youtube.readonly"]  # leitura: medir visualizações
@@ -44,7 +47,7 @@ def estatisticas(cfg_yt: dict) -> dict:
 
 
 def enviar(arquivo: str | Path, titulo: str, descricao: str, hashtags: list[str],
-           cfg_yt: dict, curto: bool = True) -> str:
+           cfg_yt: dict, curto: bool = True, capa: str = "") -> str:
     """Envia o vídeo e devolve o ID. Vertical com menos de 3 min vira Short sozinho."""
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
@@ -66,4 +69,11 @@ def enviar(arquivo: str | Path, titulo: str, descricao: str, hashtags: list[str]
     resposta = None
     while resposta is None:
         _, resposta = pedido.next_chunk(num_retries=4)
+    if capa and Path(capa).exists():
+        try:  # capa própria exige canal verificado por telefone; sem isso o vídeo segue sem ela
+            yt.thumbnails().set(videoId=resposta["id"],
+                                media_body=MediaFileUpload(capa, mimetype="image/jpeg")).execute()
+        except Exception as e:  # noqa: BLE001
+            log.warning("Vídeo %s publicado, mas a capa foi recusada: %s", resposta["id"],
+                        str(e)[:200])
     return resposta["id"]

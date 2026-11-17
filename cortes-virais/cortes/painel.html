@@ -368,7 +368,7 @@ function seloPlataforma(nome, p) {
   return `<span class="selo ${tipo}" title="${e(p.erro)}">${nome}: ${texto}${vistas(p)}</span>`;
 }
 function cartaoCorte(c) {
-  return `${c.existe ? `<video src="/midia/${c.id}" controls preload="metadata" playsinline></video>`
+  return `${c.existe ? `<video src="/midia/${c.id}" controls preload="${c.capa ? "none" : "metadata"}" playsinline ${c.capa ? `poster="/capa/${c.id}"` : ""}></video>`
                      : `<div class="sem-arquivo">Arquivo removido</div>`}
     <div class="corpo">
       <div class="linha"><span class="nota">${Math.round(c.nota)}</span><span class="sub">nota · ${tempo(c.inicio)}–${tempo(c.fim)} · ${ha(c.criado)}</span></div>

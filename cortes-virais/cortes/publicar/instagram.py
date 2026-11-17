@@ -24,7 +24,8 @@ def _checar(r: requests.Response) -> dict:
     return dados
 
 
-def enviar(arquivo: str | Path, legenda: str, cfg_ig: dict) -> tuple[str, str]:
+def enviar(arquivo: str | Path, legenda: str, cfg_ig: dict,
+           capa_ms: int | None = None) -> tuple[str, str]:
     """Publica o Reel e devolve (id, link)."""
     usuario, token = os.environ.get("IG_USER_ID"), os.environ.get("IG_ACCESS_TOKEN")
     if not usuario or not token:
@@ -33,9 +34,11 @@ def enviar(arquivo: str | Path, legenda: str, cfg_ig: dict) -> tuple[str, str]:
     grafo = f"https://graph.facebook.com/{versao}"
 
     # 1. Cria o contêiner do Reel.
-    conteiner = _checar(requests.post(f"{grafo}/{usuario}/media", timeout=60, data={
-        "media_type": "REELS", "upload_type": "resumable", "caption": legenda[:2200],
-        "share_to_feed": "true", "access_token": token}))
+    dados = {"media_type": "REELS", "upload_type": "resumable", "caption": legenda[:2200],
+             "share_to_feed": "true", "access_token": token}
+    if capa_ms is not None:
+        dados["thumb_offset"] = str(capa_ms)  # quadro do vídeo usado como capa
+    conteiner = _checar(requests.post(f"{grafo}/{usuario}/media", timeout=60, data=dados))
     cid = conteiner["id"]
     destino = conteiner.get("uri") or f"https://rupload.facebook.com/ig-api-upload/{versao}/{cid}"
 
