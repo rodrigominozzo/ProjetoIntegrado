@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import logging
 import subprocess
 import tempfile
@@ -133,7 +134,9 @@ def tema(cfg_cortes: dict) -> dict:
     nome = cfg_cortes.get("tema", "classico")
     if nome in TEMAS:
         return dict(TEMAS[nome])
-    cor = cfg_cortes.get("cor_destaque", "#FFE000")
+    cor = str(cfg_cortes.get("cor_destaque", "#FFE000"))
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", cor):  # a cor entra num filtro do ffmpeg
+        cor = "#FFE000"
     return {**TEMAS["classico"], "destaque": cor, "acento": cor}
 
 

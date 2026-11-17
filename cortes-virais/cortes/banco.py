@@ -35,6 +35,12 @@ MIGRACOES_CANAIS = ["valor_mil REAL DEFAULT 0", "texto_obrigatorio TEXT DEFAULT 
 MAX_TENTATIVAS = 3
 
 
+def _plataforma(p: str) -> None:
+    """O nome da plataforma entra em nomes de coluna: só os dois valores conhecidos passam."""
+    if p not in ("yt", "ig"):
+        raise ValueError("Plataforma inválida.")
+
+
 class Banco:
     def __init__(self, caminho: str | Path):
         self._con = sqlite3.connect(str(caminho), check_same_thread=False)
@@ -86,6 +92,7 @@ class Banco:
 
     def pendentes(self, plataforma: str) -> list[sqlite3.Row]:
         """Cortes ainda não publicados em 'yt' ou 'ig': urgentes e melhores notas primeiro."""
+        _plataforma(plataforma)
         return self._linhas(
             f"SELECT * FROM cortes WHERE teste=0 AND {plataforma}_id IS NULL"
             f" AND {plataforma}_tentativas < ?"
@@ -96,6 +103,7 @@ class Banco:
         )
 
     def publicado(self, corte_id: int, plataforma: str, id_remoto: str, link: str = "") -> None:
+        _plataforma(plataforma)
         self._exec(
             f"UPDATE cortes SET {plataforma}_id=?, {plataforma}_link=?, {plataforma}_em=?,"
             f" {plataforma}_erro=NULL WHERE id=?",
@@ -116,6 +124,7 @@ class Banco:
         self._exec("UPDATE cortes SET teste=0 WHERE id=?", (corte_id,))
 
     def tentar_de_novo(self, corte_id: int, plataforma: str) -> None:
+        _plataforma(plataforma)
         self._exec(f"UPDATE cortes SET {plataforma}_tentativas=0, {plataforma}_erro=NULL WHERE id=?",
                    (corte_id,))
 
@@ -159,12 +168,14 @@ class Banco:
 
     # --- desempenho ---
     def ids_publicados(self, plataforma: str, dias: int = 30) -> list[str]:
+        _plataforma(plataforma)
         linhas = self._linhas(
             f"SELECT {plataforma}_id i FROM cortes WHERE {plataforma}_id IS NOT NULL"
             f" AND {plataforma}_em >= ?", (time.time() - dias * 86400,))
         return [l["i"] for l in linhas]
 
     def medir(self, plataforma: str, id_remoto: str, vistas: int, curtidas: int) -> None:
+        _plataforma(plataforma)
         self._exec(f"UPDATE cortes SET {plataforma}_vistas=?, {plataforma}_curtidas=?"
                    f" WHERE {plataforma}_id=?", (vistas, curtidas, id_remoto))
 
@@ -226,6 +237,7 @@ class Banco:
                    (chave, valor))
 
     def falhou(self, corte_id: int, plataforma: str, erro: str) -> None:
+        _plataforma(plataforma)
         self._exec(
             f"UPDATE cortes SET {plataforma}_tentativas={plataforma}_tentativas+1, {plataforma}_erro=?"
             " WHERE id=?",
@@ -233,12 +245,14 @@ class Banco:
         )
 
     def publicados_desde(self, plataforma: str, desde: float) -> int:
+        _plataforma(plataforma)
         linhas = self._linhas(
             f"SELECT COUNT(*) n FROM cortes WHERE {plataforma}_em >= ?", (desde,)
         )
         return linhas[0]["n"]
 
     def ultima_publicacao(self, plataforma: str) -> float:
+        _plataforma(plataforma)
         linhas = self._linhas(f"SELECT MAX({plataforma}_em) m FROM cortes")
         return linhas[0]["m"] or 0.0
 

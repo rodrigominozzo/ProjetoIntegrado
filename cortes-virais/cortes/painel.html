@@ -211,6 +211,8 @@ textarea { min-height: 220px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo
 
 <script>
 const $ = s => document.querySelector(s);
+// Só endereços https viram link: nada de javascript: nem de outros esquemas.
+const link = u => /^https:\/\//i.test(String(u || "")) ? e(u) : "";
 const e = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let estado = null;
 const analises = {};        // video_id -> dados | "carregando" | "erro"
@@ -288,7 +290,7 @@ function cartaoLive(l) {
       ${viva ? `<button class="btn mini perigo" data-acao="live/parar" data-id="${e(l.id)}">Parar</button>`
              : `<button class="btn mini" data-acao="live/fechar" data-id="${e(l.id)}">Fechar</button>`}</div>
     <h3 style="margin-top:10px">${e(l.titulo)}</h3>
-    <div class="sub">${e(l.canal)}${l.url ? ` · <a href="${e(l.url)}" target="_blank" rel="noopener">abrir live</a>` : ""}</div>
+    <div class="sub">${e(l.canal)}${link(l.url) ? ` · <a href="${link(l.url)}" target="_blank" rel="noopener noreferrer">abrir live</a>` : ""}</div>
     <div class="medidas">
       <div class="medida"><b>${tempo((l.fim || Date.now() / 1000) - l.inicio)}</b><span>${l.fim ? "de acompanhamento" : "acompanhando"}</span></div>
       <div class="medida"><b>${l.chat_ativo ? l.mensagens_min : "—"}</b><span>${l.chat_ativo ? "mensagens/min" : "chat indisponível"}</span></div>
@@ -405,7 +407,7 @@ function cartaoConta(p, nome, c) {
 function celula(c, p, conta) {
   const s = c[p];
   if (s.situacao === "publicado")
-    return `<div class="celula"><span class="selo ok">Publicado</span><span class="sub">${ha(s.quando)}${vistas(s)}${s.link ? ` · <a href="${e(s.link)}" target="_blank" rel="noopener">abrir</a>` : ""}</span></div>`;
+    return `<div class="celula"><span class="selo ok">Publicado</span><span class="sub">${ha(s.quando)}${vistas(s)}${link(s.link) ? ` · <a href="${link(s.link)}" target="_blank" rel="noopener noreferrer">abrir</a>` : ""}</span></div>`;
   if (s.situacao === "não se aplica") return `<div class="celula"><span class="sub">Só no YouTube</span></div>`;
   const pode = conta.ativo && conta.conectado && c.existe;
   const botao = pode ? `<button class="btn mini" data-acao="corte/publicar" data-id="${c.id}" data-plataforma="${p}" data-ok="Publicação iniciada.">${s.situacao === "falhou" ? "Tentar de novo" : "Publicar agora"}</button>` : "";

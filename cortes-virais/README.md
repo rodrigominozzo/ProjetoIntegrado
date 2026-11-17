@@ -43,6 +43,8 @@ pela IA, ou o pico de volume), o sistema monta uma sequência de planos:
 
 - **Gameplay com facecam:** abre 1,5 s no rosto do jogador, alterna tela dividida e jogo
   em tela cheia, e volta ao rosto na reação.
+- **Duas pessoas (podcast, entrevista):** fecha em quem está falando, estimado pelo
+  movimento da boca, e volta ao plano com os dois nas trocas.
 - **Uma pessoa falando:** cortes com zoom a cada poucos segundos, mais fechado no
   momento-chave; pausas longas de fala são removidas.
 - **Abertura pelo ápice:** quando o começo é morno, a IA pode abrir com 1,5 s do melhor
@@ -123,6 +125,18 @@ O layout é escolhido uma vez por corte. Não há troca de enquadramento conform
 Requer `ffmpeg` e **Python entre 3.10 e 3.13** (as versões 3.14 e 3.15 ainda não têm
 todas as bibliotecas de vídeo e voz).
 
+**Windows, do jeito mais simples** — cole no PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/rodrigominozzo/ProjetoIntegrado/refs/heads/claude/elegant-goldberg-d4fcol/cortes-virais/instalar-online.ps1 | iex
+```
+
+Ele baixa o programa para `C:\Users\<você>\CortesVirais`, instala tudo e cria o atalho
+"Cortes Virais" na Área de Trabalho. Rodar de novo atualiza, preservando configurações,
+chaves e cortes.
+
+Ou manualmente:
+
 | Sistema | Instalar (uma vez) | Abrir |
 |---|---|---|
 | Windows | dois cliques em `instalar.bat` | dois cliques em `Cortes Virais.bat` |
@@ -191,6 +205,33 @@ python -m cortes status
 `python -m cortes --sem-publicar vod video.mp4 --chat chat.jsonl`
 
 Para rodar 24 h, deixe `python -m cortes auto` num servidor (systemd, tmux ou Docker).
+
+## Segurança
+
+O programa trata como não confiável tudo o que vem de fora: links, títulos, chat,
+transcrições, respostas da IA e requisições ao painel.
+
+- **Links:** só YouTube, Twitch e Kick. Endereços de rede interna, outros sites e outros
+  esquemas são recusados antes de qualquer download.
+- **Painel:** aceita conexões apenas deste computador. Confere o endereço e a origem de
+  cada pedido (bloqueia páginas de outros sites, inclusive por DNS rebinding), exige um
+  cabeçalho próprio nas ações, limita o tamanho dos pedidos e envia cabeçalhos que
+  impedem a página de ser embutida ou de carregar recursos externos.
+- **Acesso por outros aparelhos:** só com `--host 0.0.0.0` e uma senha de 8+ caracteres
+  em `PAINEL_SENHA`; sem a senha, o programa se recusa a abrir para a rede. Nesse modo,
+  não é possível apontar para arquivos do computador.
+- **Injeção por chat ou título:** a IA é instruída a tratar esse material como dado, e
+  os textos que ela devolve passam por um filtro que remove qualquer endereço antes de
+  virar título, descrição, gancho, capa ou narração.
+- **Chaves:** ficam no `.env`, nunca voltam para a página, e são apagadas das mensagens
+  de erro e do registro.
+- **Comandos e banco:** nenhum comando passa por shell; nomes de arquivo e de pasta são
+  higienizados; as consultas ao banco usam parâmetros.
+- **YouTube:** o retorno da autorização é conferido, para que só a conexão iniciada no
+  painel seja aceita.
+
+Fora do alcance do programa: a segurança do seu computador e das suas contas. Guarde o
+`.env`, o `client_secret.json` e o `youtube_token.json` como senhas.
 
 ## Pontos de atenção
 

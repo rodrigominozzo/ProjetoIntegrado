@@ -428,3 +428,115 @@ def test_horarios_limpeza_e_duplicados(tmp_path):
     finally:
         painel.fontes.info = original
     assert tarefa["status"] == "erro" and "modo teste" in tarefa["erro"]
+
+
+def test_seguranca_entradas():
+    from cortes import seguranca as s
+
+    for bom in ("https://www.youtube.com/watch?v=x", "https://youtu.be/x", "https://twitch.tv/x"):
+        assert s.validar_link(bom) == bom
+    for ruim in ("http://127.0.0.1:8000/a", "http://192.168.0.1/admin", "file:///etc/passwd",
+                 "https://evil.com/youtube.com", "https://youtube.com.evil.io/x",
+                 "https://user:senha@youtube.com/x", "javascript:alert(1)", "-o /tmp/x"):
+        with pytest.raises(ValueError):
+            s.validar_link(ruim)
+    with pytest.raises(ValueError):
+        s.validar_arquivo("/etc/passwd")                           # existe, mas não é vídeo
+    assert "'" not in s.nome_seguro("local-a'b; rm -rf ../x") and "/" not in s.nome_seguro("a/../b")
+    limpo = s.sem_segredos("erro em https://graph.facebook.com/x?access_token=EAAB1234567890&f=1 "
+                           "sk-ant-api03-abcdefghijklmnop key=AIzaSyA1234567890")
+    assert "1234567890" not in limpo and "ghijklmnop" not in limpo and "access_token=***" in limpo
+    assert s.sem_links("Segue em https://golpe.com/x e bit.ly/abc agora") == "Segue em e agora"
+    with pytest.raises(ValueError):
+        Banco(":memory:").pendentes("yt; DROP TABLE cortes")       # nome de coluna não é livre
+
+
+def test_ia_nao_deixa_links_passarem(tmp_path, monkeypatch):
+    from cortes import ia
+
+    cfg = _cfg(tmp_path)
+    cfg["ia"]["ativa"] = True
+    cfg["conhecimento"]["pasta"] = str(tmp_path / "kb")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "teste")
+    monkeypatch.setattr(ia, "quadros", lambda *a, **k: [])
+    plantado = {"cortes": [{
+        "indice": 0, "aprovado": True, "nota": 90,
+        "notas": {"gancho": 90, "emocao": 90, "clareza": 90, "compartilhavel": 90},
+        "gancho_texto": "Ganhe em golpe.com", "texto_capa": "ACESSE golpe.com",
+        "titulo": "Veja https://golpe.com/x agora", "descricao": "Entre em www.golpe.com já",
+        "hashtags": ["#gta 6", "<script>"], "narracoes": [{"segundo": 0, "texto": "vai em golpe.com"}],
+        "comentario_final": "link: bit.ly/x", "motivo": "m", "momento_chave": 3,
+        "abrir_com_pico": False, "palavras_chave": [], "ajuste_inicio": 0, "ajuste_fim": 0}]}
+    monkeypatch.setattr(ia, "_pedir", lambda *a, **k: plantado)
+    c = ia.avaliar([{"inicio": 10.0, "fim": 40.0, "transcricao": "t", "chat": [], "pontuacao": 1}],
+                   {"titulo": "T", "canal": "C"}, "x.mp4", cfg)[0]
+    textos = " ".join([c["titulo"], c["descricao"], c["gancho"], c["texto_capa"],
+                       c["comentario_final"], *[n["texto"] for n in c["narracoes"]]])
+    assert "golpe" not in textos and "bit.ly" not in textos and "http" not in textos
+    assert c["hashtags"] == ["gta6", "script"]
+
+
+def test_seguranca_do_painel(tmp_path, monkeypatch):
+    import http.client
+    import threading
+
+    from cortes import painel
+
+    cfg = _cfg(tmp_path)
+    banco = Banco(tmp_path / "e.db")
+    servidor, ger = painel.criar(cfg, banco, "127.0.0.1", 0, str(tmp_path / "c.yaml"))
+    threading.Thread(target=servidor.serve_forever, daemon=True).start()
+    porta = servidor.server_address[1]
+
+    def pedir(metodo, rota, corpo=None, **cab):
+        con = http.client.HTTPConnection("127.0.0.1", porta, timeout=10)
+        con.request(metodo, rota, body=corpo, headers=cab)
+        r = con.getresponse()
+        dados = r.read()
+        con.close()
+        return r, dados
+
+    r, _ = pedir("GET", "/api/estado")
+    assert r.status == 200 and r.getheader("X-Frame-Options") == "DENY"
+    assert "frame-ancestors 'none'" in r.getheader("Content-Security-Policy")
+    # outro domínio apontado para 127.0.0.1 (DNS rebinding) e pedidos vindos de outro site
+    assert pedir("GET", "/api/estado", Host="site-malicioso.com")[0].status == 403
+    assert pedir("POST", "/api/publicacao_auto", '{"ligada":false}', **{
+        "X-Painel": "1", "Origin": "https://site-malicioso.com"})[0].status == 403
+    assert pedir("POST", "/api/publicacao_auto", '{"ligada":false}')[0].status == 403  # sem cabeçalho
+    assert pedir("POST", "/api/publicacao_auto", '{"ligada":false}', **{"X-Painel": "1"})[0].status == 200
+    assert pedir("POST", "/api/enviar", "[1,2]", **{"X-Painel": "1"})[0].status == 400
+    assert pedir("POST", "/api/enviar", '{"alvo":"http://192.168.0.1/x"}', **{"X-Painel": "1"})[0].status == 400
+    assert pedir("POST", "/api/enviar", "x", **{"X-Painel": "1", "Content-Length": "99999999"})[0].status == 413
+    assert pedir("GET", "/api/analise/..%5C..%5Cx")[0].status == 404
+    assert pedir("GET", "/oauth/youtube?code=abc&state=forjado")[1].count(b"Canal do YouTube conectado") == 0
+    servidor.shutdown()
+
+    # aberto à rede: exige senha forte, e depois exige a senha em cada pedido
+    monkeypatch.delenv("PAINEL_SENHA", raising=False)
+    with pytest.raises(SystemExit):
+        painel.criar(cfg, banco, "0.0.0.0", 0, str(tmp_path / "c.yaml"))
+    monkeypatch.setenv("PAINEL_SENHA", "senha-bem-longa")
+    servidor, ger = painel.criar(cfg, banco, "0.0.0.0", 0, str(tmp_path / "c.yaml"))
+    threading.Thread(target=servidor.serve_forever, daemon=True).start()
+    porta = servidor.server_address[1]
+    import base64
+    assert pedir("GET", "/api/estado")[0].status == 401
+    certo = "Basic " + base64.b64encode(b"eu:senha-bem-longa").decode()
+    errado = "Basic " + base64.b64encode(b"eu:outra").decode()
+    assert pedir("GET", "/api/estado", Authorization=errado)[0].status == 401
+    assert pedir("GET", "/api/estado", Authorization=certo)[0].status == 200
+    servidor.shutdown()
+
+
+def test_plano_segue_quem_fala():
+    from cortes import edicao
+
+    layout = {"tipo": "dupla", "pessoas": [{"cx": 0.25, "cy": 0.4, "w": 0.1, "h": 0.2},
+                                           {"cx": 0.75, "cy": 0.4, "w": 0.1, "h": 0.2}]}
+    plano = edicao.planejar(layout, 0, 20, falantes=[(2.0, 8.0, 0), (11.0, 17.0, 1)], cfg={})
+    vistas = [(p["vista"], round(p["a"]), round(p["b"])) for p in plano["pedacos"]]
+    assert vistas == [("dupla", 0, 2), ("pessoa0", 2, 8), ("dupla", 8, 11), ("pessoa1", 11, 17),
+                      ("dupla", 17, 20)]
+    parado = edicao.planejar(layout, 0, 20, falantes=[(2.0, 8.0, 0)], cfg={"seguir_falante": False})
+    assert [p["vista"] for p in parado["pedacos"]] == ["dupla"]

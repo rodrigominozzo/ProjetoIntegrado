@@ -8,7 +8,11 @@ import os
 import subprocess
 from pathlib import Path
 
+import re
+
 import requests
+
+from . import seguranca
 
 log = logging.getLogger(__name__)
 API = "https://www.googleapis.com/youtube/v3"
@@ -30,15 +34,16 @@ def duracao_arquivo(caminho: str | Path) -> float:
 
 def info(alvo: str) -> dict:
     """Metadados normalizados de uma URL do YouTube ou de um arquivo local."""
-    if Path(alvo).exists():
-        p = Path(alvo)
-        return {"id": f"local-{p.stem}", "titulo": p.stem, "canal": "", "canal_id": "",
+    if not re.match(r"https?://", alvo, re.I):
+        p = Path(seguranca.validar_arquivo(alvo))
+        return {"id": seguranca.nome_seguro(f"local-{p.stem}"), "titulo": p.stem, "canal": "", "canal_id": "",
                 "url": "", "duracao": duracao_arquivo(p), "ao_vivo": False, "replay": [],
                 "arquivo": str(p)}
+    alvo = seguranca.validar_link(alvo)
     with _ydl({"skip_download": True}) as ydl:
         d = ydl.extract_info(alvo, download=False)
     return {
-        "id": d["id"],
+        "id": seguranca.nome_seguro(str(d["id"])),
         "titulo": d.get("title") or "",
         "canal": d.get("channel") or d.get("uploader") or "",
         "canal_id": d.get("channel_id") or "",
@@ -52,6 +57,7 @@ def info(alvo: str) -> dict:
 
 def baixar(url: str, pasta: Path, altura_max: int, idioma: str, progresso=None) -> dict:
     """Baixa vídeo, legendas (json3) e replay do chat. Devolve os caminhos encontrados."""
+    url = seguranca.validar_link(url)
     pasta.mkdir(parents=True, exist_ok=True)
     modelo = str(pasta / "fonte.%(ext)s")
     with _ydl({
@@ -89,6 +95,7 @@ def _gancho(progresso):
 
 def url_do_fluxo(url: str, altura: int) -> str:
     """URL HLS direta de uma live em andamento."""
+    url = seguranca.validar_link(url)
     with _ydl({"skip_download": True, "format": f"b[height<={altura}]/b"}) as ydl:
         return ydl.extract_info(url, download=False)["url"]
 

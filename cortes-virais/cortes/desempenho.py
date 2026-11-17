@@ -11,6 +11,7 @@ import time
 
 import requests
 
+from . import seguranca
 from .banco import Banco
 
 log = logging.getLogger(__name__)
@@ -60,7 +61,8 @@ def atualizar(cfg: dict, banco: Banco) -> int:
                 banco.medir(plataforma, remoto, vistas, curtidas)
                 total += 1
         except Exception as e:  # noqa: BLE001
-            log.warning("Não foi possível medir o desempenho no %s: %s", publicar.NOMES[plataforma], e)
+            log.warning("Não foi possível medir o desempenho no %s: %s", publicar.NOMES[plataforma],
+                        seguranca.sem_segredos(e))
     return total
 
 

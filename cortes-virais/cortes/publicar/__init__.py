@@ -8,6 +8,7 @@ import re
 import time
 from pathlib import Path
 
+from .. import seguranca
 from ..banco import Banco
 from . import instagram, youtube
 
@@ -71,8 +72,9 @@ def publicar_um(cfg: dict, banco: Banco, corte, plataforma: str) -> bool:
             remoto, link = instagram.enviar(corte["arquivo"], _texto(corte, "ig"), cfg_p,
                                             capa_ms=corte["capa_ms"])
     except Exception as e:  # noqa: BLE001
-        log.error("Falha ao publicar corte %s no %s: %s", corte["id"], nome, e)
-        banco.falhou(corte["id"], plataforma, str(e))
+        erro = seguranca.sem_segredos(e)
+        log.error("Falha ao publicar corte %s no %s: %s", corte["id"], nome, erro)
+        banco.falhou(corte["id"], plataforma, erro)
         return False
     banco.publicado(corte["id"], plataforma, remoto, link)
     log.info("Publicado no %s: %s (%s)", nome, corte["titulo"], remoto)

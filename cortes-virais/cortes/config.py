@@ -50,6 +50,7 @@ PADRAO = {
     "edicao": {
         "dinamica": True,          # troca de plano e zoom ao longo do corte
         "abrir_no_rosto": True,    # gameplay: começa no rosto do jogador
+        "seguir_falante": True,    # duas pessoas: fecha em quem está falando
         "cortar_silencios": True,  # tira as pausas longas de fala
         "pausa_minima": 1.2,       # segundos de silêncio para ser cortado
         "abertura_pico": True,     # permite abrir com 1,5 s do ápice (a IA decide quando)

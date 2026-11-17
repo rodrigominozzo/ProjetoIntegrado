@@ -53,7 +53,8 @@ def faixas_de_fala(palavras: list, inicio: float, fim: float, pausa_minima: floa
 
 def planejar(layout: dict, inicio: float, fim: float, *, palavras: list | None = None,
              energia: np.ndarray | None = None, momento: float | None = None,
-             abrir_com_pico: bool = False, cfg: dict | None = None) -> dict:
+             abrir_com_pico: bool = False, cfg: dict | None = None,
+             falantes: list[tuple[float, float, int]] | None = None) -> dict:
     """Monta o plano de edição. `momento` é o instante-chave no vídeo de origem (ou None
     para usar o pico de volume). Devolve {"pedacos", "flash", "duracao", "momento"}."""
     cfg = cfg or {}
@@ -101,6 +102,10 @@ def planejar(layout: dict, inicio: float, fim: float, *, palavras: list | None =
         if tipo == "facecam" and cfg.get("abrir_no_rosto", True):
             for i in range(min(n, int(1.6 / PASSO))):  # rosto é o que mais segura a rolagem
                 linha[i] = ("reacao", 1.0)
+        if tipo == "dupla" and cfg.get("seguir_falante", True):
+            for a, b, quem in falantes or []:  # fecha em quem fala; a dupla volta nas trocas
+                for i in range(max(0, int(para_saida(a) / PASSO)), min(n, int(para_saida(b) / PASSO))):
+                    linha[i] = (f"pessoa{quem}", 1.0)
         if momento is not None and tipo in DESTAQUE:
             vista, zoom, antes, depois = DESTAQUE[tipo]
             m = para_saida(momento)

@@ -6,6 +6,7 @@ plano; a página consulta /api/estado a cada 2 segundos.
 from __future__ import annotations
 
 import html
+import os
 import itertools
 import json
 import logging
@@ -17,7 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import (ajustes, conhecimento, desempenho, enquadramento, fontes, ia, narracao,
+from . import (ajustes, conhecimento,  # noqa: I001
+               seguranca, desempenho, enquadramento, fontes, ia, narracao,
                publicar, transcricao, vod)
 from .banco import MAX_TENTATIVAS, Banco
 from .live import MonitorLive
@@ -32,6 +34,9 @@ class Gerenciador:
         self.cfg, self.banco = cfg, banco
         self.caminho_cfg, self.porta = caminho_cfg, porta
         self._fluxo_youtube = None
+        self._estado_youtube = ""
+        self.senha = ""                      # definida só quando o painel é aberto à rede
+        self.hosts_aceitos: set[str] = set()
         self._canal_yt: tuple[float, dict | None] = (0.0, None)
         self.tarefas: dict[str, dict] = {}
         self.lives: dict[str, MonitorLive] = {}
@@ -77,12 +82,17 @@ class Gerenciador:
             m.parar()
 
     # --- entrada de links ---
-    def enviar(self, alvo: str, teste: bool, como_live: bool = False, origem: str = "manual") -> dict:
-        alvo = alvo.strip()
+    def enviar(self, alvo: str, teste: bool, como_live: bool = False, origem: str = "manual",
+               permitir_arquivo: bool = True) -> dict:
+        alvo = str(alvo).strip()
         if not alvo:
             raise ValueError("Informe um link do YouTube.")
-        if not re.match(r"https?://", alvo) and not Path(alvo).exists():
-            raise ValueError("Isso não é um link nem um arquivo que exista neste computador.")
+        if re.match(r"https?://", alvo, re.I):
+            alvo = seguranca.validar_link(alvo)
+        elif permitir_arquivo:
+            alvo = seguranca.validar_arquivo(alvo)
+        else:  # quem acessa de outro aparelho não pode apontar para arquivos deste computador
+            raise ValueError("Arquivos locais só podem ser enviados no próprio computador.")
         tarefa = {
             "id": f"t{next(self._seq)}", "alvo": alvo, "titulo": alvo, "canal": "", "teste": teste,
             "origem": origem, "status": "identificando", "etapa": "Identificando o vídeo",
@@ -344,19 +354,27 @@ class Gerenciador:
         self._fluxo_youtube = Flow.from_client_secrets_file(
             cfg_yt["client_secret"], youtube.ESCOPOS,
             redirect_uri=f"http://localhost:{self.porta}/oauth/youtube")
-        url, _ = self._fluxo_youtube.authorization_url(access_type="offline", prompt="consent")
+        url, self._estado_youtube = self._fluxo_youtube.authorization_url(
+            access_type="offline", prompt="consent")
         return url
 
-    def youtube_concluir(self, codigo: str) -> None:
+    def youtube_concluir(self, codigo: str, estado: str = "") -> None:
         if not self._fluxo_youtube:
             raise ValueError("A autorização expirou. Clique em Conectar de novo.")
+        # O retorno precisa ser o da autorização que este painel iniciou; sem isso, um link
+        # malicioso poderia conectar aqui o canal de outra pessoa.
+        if not estado or not seguranca.senha_confere(estado, self._estado_youtube or ""):
+            self._fluxo_youtube = None
+            raise ValueError("Retorno de autorização inválido. Clique em Conectar de novo.")
         self._fluxo_youtube.fetch_token(code=codigo)
         Path(self.cfg["publicar"]["youtube"]["token"]).write_text(
             self._fluxo_youtube.credentials.to_json())
         self._fluxo_youtube = None
 
     # --- ações da página ---
-    def acao(self, nome: str, d: dict) -> dict:
+    def acao(self, nome: str, d: dict, local: bool = True) -> dict:
+        if not isinstance(d, dict):
+            raise ValueError("Pedido inválido.")
         if nome == "ajustes/salvar":
             ajustes.salvar(self.cfg, d.get("valores") or {}, self.caminho_cfg)
         elif nome == "chave":
@@ -382,7 +400,8 @@ class Gerenciador:
         elif nome == "base/remover":
             conhecimento.remover(self.cfg, d.get("nome", ""))
         elif nome == "enviar":
-            self.enviar(d.get("alvo", ""), bool(d.get("teste")), bool(d.get("como_live")))
+            self.enviar(d.get("alvo", ""), bool(d.get("teste")), bool(d.get("como_live")),
+                        permitir_arquivo=local)
         elif nome == "live/parar":
             self.parar_live(d["id"])
         elif nome == "live/fechar":
@@ -428,7 +447,7 @@ class Gerenciador:
 
 
 def _resumo(e: Exception) -> str:
-    texto = re.sub(r"\x1b\[[0-9;]*m", "", str(e)).strip() or type(e).__name__
+    texto = re.sub(r"\x1b\[[0-9;]*m", "", seguranca.sem_segredos(e)).strip() or type(e).__name__
     return texto[:300]
 
 
@@ -438,6 +457,47 @@ def _manipulador(ger: Gerenciador):
 
         def log_message(self, *args) -> None:  # silencia o log por requisição
             pass
+
+        def end_headers(self) -> None:
+            for nome, valor in seguranca.CABECALHOS.items():
+                self.send_header(nome, valor)
+            super().end_headers()
+
+        def _permitido(self) -> bool:
+            """Barra pedidos que não vêm do próprio painel. Responde e devolve False se barrar."""
+            # 1. O endereço pedido tem de ser o deste painel. Um site malicioso pode apontar
+            #    o próprio domínio para 127.0.0.1 (DNS rebinding); o cabeçalho Host o denuncia.
+            host = seguranca.host_do_pedido(self.headers.get("Host", ""))
+            # Com senha (acesso pela rede), vale também o IP da máquina ou um nome autorizado.
+            pela_rede = bool(ger.senha) and (seguranca.eh_ip(host) or host.lower() in ger.hosts_aceitos)
+            if not (seguranca.host_local(host) or pela_rede):
+                self._json({"erro": "Endereço não reconhecido."}, 403)
+                return False
+            # 2. Pedido vindo de outra página (outro site aberto no navegador) é recusado.
+            origem = self.headers.get("Origin")
+            if origem and origem != "null":
+                partes = urlsplit(origem)
+                if (partes.hostname or "") != host:
+                    self._json({"erro": "Origem não permitida."}, 403)
+                    return False
+            # 3. Com senha definida (acesso por outros aparelhos), exige a senha.
+            if ger.senha:
+                import base64
+                recebido = ""
+                credencial = self.headers.get("Authorization", "")
+                if credencial.startswith("Basic "):
+                    try:
+                        recebido = base64.b64decode(credencial[6:]).decode().partition(":")[2]
+                    except (ValueError, UnicodeDecodeError):
+                        recebido = ""
+                if not seguranca.senha_confere(recebido, ger.senha):
+                    time.sleep(0.5)  # atrasa tentativas em série
+                    self.send_response(401)
+                    self.send_header("WWW-Authenticate", 'Basic realm="Cortes Virais"')
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return False
+            return True
 
         def _json(self, dados, codigo: int = 200) -> None:
             corpo = json.dumps(dados, ensure_ascii=False).encode()
@@ -489,6 +549,8 @@ def _manipulador(ger: Gerenciador):
                     pass  # o navegador fechou a conexão ao pular no vídeo
 
         def do_GET(self) -> None:  # noqa: N802
+            if not self._permitido():
+                return
             rota = self.path.split("?")[0]
             if rota == "/":
                 return self._arquivo(PAGINA, "text/html; charset=utf-8")
@@ -503,7 +565,7 @@ def _manipulador(ger: Gerenciador):
                 try:
                     if "code" not in consulta:
                         raise ValueError(consulta.get("error", ["Autorização cancelada."])[0])
-                    ger.youtube_concluir(consulta["code"][0])
+                    ger.youtube_concluir(consulta["code"][0], consulta.get("state", [""])[0])
                     texto = "Canal do YouTube conectado. Pode fechar esta aba e voltar ao painel."
                 except Exception as e:  # noqa: BLE001
                     texto = f"Não foi possível conectar: {_resumo(e)}"
@@ -535,15 +597,24 @@ def _manipulador(ger: Gerenciador):
             self._json({"erro": "Não encontrado."}, 404)
 
         def do_POST(self) -> None:  # noqa: N802
-            tamanho = int(self.headers.get("Content-Length") or 0)
+            try:
+                tamanho = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                tamanho = -1
+            if not 0 <= tamanho <= seguranca.TAMANHO_MAXIMO_PEDIDO:
+                self.close_connection = True
+                return self._json({"erro": "Pedido grande demais."}, 413)
             corpo = self.rfile.read(tamanho) if tamanho else b"{}"
+            if not self._permitido():
+                return
             # Cabeçalho próprio: impede que outro site dispare ações neste painel.
             if self.headers.get("X-Painel") != "1" or not self.path.startswith("/api/"):
                 return self._json({"erro": "Requisição recusada."}, 403)
             try:
-                self._json(ger.acao(self.path[len("/api/"):], json.loads(corpo or b"{}")))
-            except (ValueError, KeyError) as e:
-                self._json({"erro": str(e) or "Pedido inválido."}, 400)
+                local = seguranca.host_local(self.client_address[0])
+                self._json(ger.acao(self.path[len("/api/"):], json.loads(corpo or b"{}"), local))
+            except (ValueError, KeyError, TypeError) as e:
+                self._json({"erro": seguranca.sem_segredos(e) or "Pedido inválido."}, 400)
             except Exception as e:  # noqa: BLE001
                 log.exception("Erro na ação %s", self.path)
                 self._json({"erro": _resumo(e)}, 500)
@@ -562,8 +633,17 @@ def criar(cfg: dict, banco: Banco, host: str = "127.0.0.1", porta: int = 8000,
             if not isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError)):
                 super().handle_error(request, client_address)  # navegador fechando conexão é normal
 
+    senha = os.environ.get("PAINEL_SENHA", "")
+    if not seguranca.host_local(host) and len(senha) < 8:
+        raise SystemExit(
+            "Para abrir o painel a outros aparelhos, defina uma senha de pelo menos 8 "
+            "caracteres em PAINEL_SENHA no arquivo .env. Sem isso, qualquer pessoa na sua "
+            "rede poderia publicar nas suas contas.")
     servidor = Servidor((host, porta), None)
     ger = Gerenciador(cfg, banco, caminho_cfg, servidor.server_address[1])
+    ger.senha = senha if not seguranca.host_local(host) else ""
+    ger.hosts_aceitos = {h.strip().lower() for h in os.environ.get("PAINEL_HOSTS", "").split(",")
+                         if h.strip()} if ger.senha else set()
     servidor.RequestHandlerClass = _manipulador(ger)
     return servidor, ger
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -40,6 +41,8 @@ def instalar_voz(cfg: dict) -> None:
     destino = Path(cfg["narracao"]["voz"])
     nome = destino.stem  # ex.: pt_BR-faber-medium
     try:
+        if not re.fullmatch(r"[A-Za-z]{2}_[A-Za-z]{2}-\w+-\w+", nome) or destino.suffix != ".onnx":
+            raise RuntimeError("O arquivo da voz deve ter um nome como vozes/pt_BR-faber-medium.onnx.")
         if sys.version_info[:2] > (3, 13):
             raise RuntimeError(
                 f"Este programa está rodando no Python {sys.version_info.major}."

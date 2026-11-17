@@ -72,6 +72,9 @@ SECOES = [
         ("edicao.abrir_no_rosto", "booleano", "Gameplay: abrir no rosto do jogador",
          "O primeiro segundo e meio mostra a reação do jogador. Rosto é o que mais segura "
          "quem está rolando a tela.", {}),
+        ("edicao.seguir_falante", "booleano", "Duas pessoas: fechar em quem fala",
+         "Em podcasts e entrevistas, o corte alterna entre o close de quem está falando e o "
+         "plano com os dois. A fala é estimada pelo movimento da boca.", {}),
         ("edicao.cortar_silencios", "booleano", "Cortar pausas longas de fala",
          "Tira o tempo morto entre as falas. Não se aplica a gameplay, onde o silêncio "
          "costuma ter ação.", {}),
@@ -185,6 +188,7 @@ SECOES = [
 
 CHAVES = {
     "ANTHROPIC_API_KEY": "Chave da API do Claude",
+    "PAINEL_SENHA": "Senha do painel (só para acesso por outros aparelhos)",
     "ELEVENLABS_API_KEY": "Chave da ElevenLabs (voz mais natural, opcional)",
     "IG_USER_ID": "ID da conta do Instagram",
     "IG_ACCESS_TOKEN": "Token de acesso do Instagram",

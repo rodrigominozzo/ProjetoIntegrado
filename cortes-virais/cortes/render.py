@@ -18,7 +18,7 @@ POSICOES = {
     # Área segura de Shorts e Reels: nada importante nos ~28% de baixo nem nos ~8% de cima.
     "blur":    {"fala": ("baixo", 0.27), "gancho": 0.15},   # faixas desfocadas acima/abaixo
     "rosto":   {"fala": ("baixo", 0.30), "gancho": 0.085},
-    "dupla":   {"fala": ("meio", 0.0),   "gancho": 0.085},  # legenda na emenda dos painéis
+    "dupla":   {"fala": ("baixo", 0.30), "gancho": 0.085},  # serve à dupla e ao close
     "facecam": {"fala": ("baixo", 0.30), "gancho": 0.085},  # serve à tela dividida e ao close
     "original": {"fala": ("baixo", 0.08), "gancho": 0.10},
 }
@@ -80,8 +80,16 @@ def renderizar(video: str | Path, inicio: float, fim: float, saida: Path, *, for
         tipo = "original"
     else:
         energia = sinais.volume_por_segundo(video, inicio, fim - inicio) if tem_audio else None
+        falantes = None
+        if layout["tipo"] == "dupla" and cfg_edicao.get("seguir_falante", True) \
+                and cfg_edicao.get("dinamica", True):
+            try:
+                falantes = enquadramento.quem_fala(video, inicio, fim, layout["pessoas"])
+            except Exception:  # noqa: BLE001 — na dúvida, fica a dupla o tempo todo
+                falantes = None
         plano = edicao.planejar(layout, inicio, fim, palavras=palavras, energia=energia,
-                                momento=momento, abrir_com_pico=abrir_com_pico, cfg=cfg_edicao)
+                                momento=momento, abrir_com_pico=abrir_com_pico, cfg=cfg_edicao,
+                                falantes=falantes)
         video_fc = edicao.grafo(plano, layout, inicio, w, h, tem_audio, largura, altura,
                                 acento=cores["acento"].replace("#", "0x"))
         tipo = layout["tipo"]

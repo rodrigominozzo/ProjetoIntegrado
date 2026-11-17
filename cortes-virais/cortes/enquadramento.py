@@ -104,6 +104,45 @@ def classificar(quadros: list[list[tuple[float, float, float, float]]]) -> dict:
     return {"tipo": "rosto", "rosto": a}
 
 
+def quem_fala(video: str | Path, inicio: float, fim: float, pessoas: list[dict],
+              fps: int = 6) -> list[tuple[float, float, int]]:
+    """Em cenas com duas pessoas, estima quem está falando pelo movimento da boca.
+
+    Devolve trechos (início, fim, índice da pessoa) em que uma delas claramente fala
+    sozinha por pelo menos 1,5 s. Onde as duas falam, ou nenhuma, não devolve nada.
+    """
+    w, h = dimensoes(video)
+    lw = 640
+    lh = int(h * lw / w) // 2 * 2
+    bruto = subprocess.run(
+        ["ffmpeg", "-v", "error", "-ss", f"{inicio:.2f}", "-t", f"{fim - inicio:.2f}", "-i",
+         str(video), "-vf", f"fps={fps},scale={lw}:{lh}", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+        capture_output=True).stdout
+    n = len(bruto) // (lw * lh)
+    if n < fps * 3 or len(pessoas) < 2:
+        return []
+    quadros = np.frombuffer(bruto[: n * lw * lh], dtype=np.uint8).reshape(n, lh, lw)
+    movimento = []
+    for p in pessoas[:2]:  # região da boca: metade de baixo do rosto
+        x0, x1 = int((p["cx"] - p["w"] * 0.35) * lw), int((p["cx"] + p["w"] * 0.35) * lw)
+        y0, y1 = int((p["cy"] + p["h"] * 0.05) * lh), int((p["cy"] + p["h"] * 0.5) * lh)
+        boca = quadros[:, max(0, y0):max(1, y1), max(0, x0):max(1, x1)].astype(np.int16)
+        if boca.size == 0:
+            return []
+        mov = np.abs(np.diff(boca, axis=0)).mean(axis=(1, 2))
+        movimento.append(np.convolve(mov, np.ones(fps) / fps, mode="same"))  # média de 1 s
+    a, b = movimento
+    piso = 0.5  # abaixo disso é ruído de compressão, não fala
+    rotulos = np.where((a > b * 1.4) & (a > piso), 0, np.where((b > a * 1.4) & (b > piso), 1, -1))
+    trechos, comeco = [], 0
+    for i in range(1, len(rotulos) + 1):
+        if i == len(rotulos) or rotulos[i] != rotulos[comeco]:
+            if rotulos[comeco] >= 0 and (i - comeco) / fps >= 1.5:
+                trechos.append((inicio + comeco / fps, inicio + i / fps, int(rotulos[comeco])))
+            comeco = i
+    return trechos
+
+
 def planejar(video: str | Path, inicio: float, fim: float) -> dict:
     if not disponivel():
         return {"tipo": "blur"}
@@ -144,6 +183,9 @@ def cadeia(vista: str, layout: dict, w: int, h: int, zoom: float, ent: str, sai:
         ch = h / zoom
         cy = h / 2 if zoom <= 1.01 else r["cy"] * h + ch * 0.12
         return f"[{ent}]{_caixa(r['cx'] * w, cy, ch * proporcao, ch, w, h)},{fim}"
+    if vista.startswith("pessoa") and layout.get("pessoas"):  # close em quem está falando
+        pessoa = layout["pessoas"][int(vista[-1])]
+        return f"[{ent}]{_caixa(pessoa['cx'] * w, h / 2, h * proporcao, h, w, h)},{fim}"
     if vista == "reacao" and r:
         ch = min(h, r["h"] * h * 4.2 / zoom)
         return f"[{ent}]{_caixa(r['cx'] * w, r['cy'] * h + ch * 0.1, ch * proporcao, ch, w, h)},{fim}"
