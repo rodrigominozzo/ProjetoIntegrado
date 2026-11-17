@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import chat, fontes, ia, render, sinais, transcricao
+from . import chat, desempenho, fontes, ia, render, sinais, transcricao
 from .banco import Banco
 
 log = logging.getLogger(__name__)
@@ -21,10 +21,12 @@ def finalizar(c: dict, video: Path, contexto: dict, cfg: dict, banco: Banco, pas
     canal = contexto.get("canal", "")
     creditar = cfg["publicar"]["creditar_fonte"] and canal
     saida = pasta / f"corte_{int(c['inicio']):06d}.mp4"
-    render.renderizar(
+    _, layout = render.renderizar(
         video, ini, fim, saida, formato=cfg["cortes"]["formato"],
         palavras=palavras if cfg["cortes"]["legendas"] else None,
         credito=f"Créditos: {canal}" if creditar else "",
+        gancho=c.get("gancho", "") if cfg["cortes"]["gancho"] else "",
+        karaoke=cfg["cortes"]["karaoke"], cor_destaque=cfg["cortes"]["cor_destaque"],
     )
     descricao = c["descricao"]
     if creditar and contexto.get("url"):
@@ -33,10 +35,23 @@ def finalizar(c: dict, video: Path, contexto: dict, cfg: dict, banco: Banco, pas
     corte_id = banco.novo_corte(
         video_id=contexto["id"], origem=origem, inicio=c["inicio"], fim=c["fim"], nota=c["nota"],
         titulo=c["titulo"], descricao=descricao, hashtags=c["hashtags"], arquivo=saida,
-        urgente=urgente, teste=bool(contexto.get("teste")))
+        urgente=urgente, teste=bool(contexto.get("teste")), gancho=c.get("gancho", ""),
+        notas=c.get("notas"), layout=layout)
     log.info("Corte %s pronto: [%.0fs–%.0fs] nota %.0f — %s", corte_id, c["inicio"], c["fim"],
              c["nota"], c["titulo"])
     return corte_id
+
+
+def _marcada(falas: list, inicio: float, fim: float) -> str:
+    """Transcrição com o tempo relativo ao início do corte, para a IA ajustar as bordas."""
+    partes, ultimo = [], None
+    for t0, _, palavra in falas:
+        marca = int((t0 - inicio) // 5) * 5
+        if marca != ultimo:
+            partes.append(f"[{marca:+d}s]")
+            ultimo = marca
+        partes.append(palavra)
+    return " ".join(partes) + f"  (corte atual: 0s a {fim - inicio:.0f}s)"
 
 
 def _reduzir(serie, pontos: int = 600) -> list[float]:
@@ -95,17 +110,23 @@ def processar(alvo: str, cfg: dict, banco: Banco, *, chat_arquivo: str | None = 
     candidatos = []
     for inicio, nota in janelas:
         fim = min(float(inicio + duracao), meta["duracao"] or inicio + duracao)
-        falas = transcricao.recorte(palavras, inicio - 3, fim + 3) or transcricao.transcrever(
-            video, max(0, inicio - 3), fim - inicio + 6, cfg["idioma"], cfg["transcricao"]["whisper"])
+        # Margem larga: a IA pode adiantar o início ou estender o fim do corte.
+        antes, depois = 9, 16
+        falas = transcricao.recorte(palavras, inicio - antes, fim + depois) or transcricao.transcrever(
+            video, max(0, inicio - antes), fim - inicio + antes + depois, cfg["idioma"],
+            cfg["transcricao"]["whisper"])
         ini_aj, fim_aj = transcricao.ajustar_bordas(falas, float(inicio), fim)
         candidatos.append({
             "inicio": ini_aj, "fim": fim_aj, "pontuacao": nota, "falas": falas,
-            "transcricao": transcricao.texto(transcricao.recorte(falas, ini_aj, fim_aj)),
+            "folga_inicio": min(8, ini_aj),
+            "folga_fim": max(0, min(15, (meta["duracao"] or fim_aj + 15) - fim_aj)),
+            "transcricao": _marcada(falas, ini_aj, fim_aj),
             "chat": chat.trecho(mensagens, ini_aj, fim_aj + cfg["sinais"]["atraso_chat"]),
         })
 
     # 3. IA dá nota, título e descrição; ficam os melhores aprovados.
     progresso("Avaliando com IA" if ia.disponivel(cfg) else "Ordenando pelos sinais")
+    meta["referencias"] = desempenho.referencias(banco)
     avaliados = ia.avaliar(candidatos, meta, video, cfg)
     bons = [c for c in avaliados if c["aprovado"] and c["nota"] >= cfg["ia"]["nota_minima"]]
     bons.sort(key=lambda c: c["nota"], reverse=True)
@@ -121,7 +142,8 @@ def processar(alvo: str, cfg: dict, banco: Banco, *, chat_arquivo: str | None = 
         "candidatos": [{
             "inicio": round(c["inicio"], 1), "fim": round(c["fim"], 1), "nota": c["nota"],
             "aprovado": c["aprovado"], "escolhido": c in escolhidos, "titulo": c["titulo"],
-            "motivo": c["motivo"], "transcricao": c.get("transcricao", "")[:400],
+            "motivo": c["motivo"], "gancho": c.get("gancho", ""), "notas": c.get("notas") or {},
+            "transcricao": c.get("transcricao", "")[:400],
         } for c in sorted(avaliados, key=lambda c: c["inicio"])],
     }, ensure_ascii=False), encoding="utf-8")
 

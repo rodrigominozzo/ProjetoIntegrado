@@ -122,6 +122,11 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .corte .corpo { padding: 12px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
 .corte h4 { margin: 0; font-size: 14.5px; line-height: 1.3; overflow-wrap: anywhere; }
 .nota { font-weight: 750; font-variant-numeric: tabular-nums; }
+.criterios { display: grid; grid-template-columns: auto 1fr auto; gap: 3px 8px; align-items: center;
+             font-size: 12px; color: var(--suave); }
+.criterios .barra { margin: 0; height: 5px; }
+.criterios .barra i { background: var(--ok); }
+.criterios b { color: var(--texto); font-variant-numeric: tabular-nums; }
 .acoes { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
 
 .contas { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-bottom: 16px; }
@@ -281,7 +286,7 @@ function painelAnalise(id) {
       <td class="num">${tempo(c.inicio)} – ${tempo(c.fim)}</td>
       <td class="num"><b>${Math.round(c.nota)}</b></td>
       <td><span class="selo ${c.escolhido ? "ok" : c.aprovado ? "alerta" : "erro"}">${c.escolhido ? "Cortado" : c.aprovado ? "Ficou de fora" : "Reprovado"}</span></td>
-      <td><b>${e(c.titulo)}</b><div class="sub">${e(c.motivo)}</div></td></tr>`).join("");
+      <td><b>${e(c.titulo)}</b>${c.gancho ? `<div class="sub">Gancho: “${e(c.gancho)}”</div>` : ""}<div class="sub">${e(c.motivo)}</div></td></tr>`).join("");
   return `<div class="analise">
     <svg class="linha-tempo" viewBox="0 0 ${L} ${A}" preserveAspectRatio="none" role="img" aria-label="Pontuação ao longo do vídeo">${faixas}
       <polyline points="${pts}" fill="none" stroke="var(--texto)" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>
@@ -320,10 +325,17 @@ function cartaoTarefa(t) {
 }
 
 // ---------- cortes ----------
+const NOMES_CRITERIOS = {gancho: "Gancho", emocao: "Emoção", clareza: "Clareza", compartilhavel: "Compartilhável"};
+function criterios(n) {
+  if (!n || !Object.keys(n).length) return "";
+  return `<div class="criterios">${Object.entries(NOMES_CRITERIOS).map(([k, nome]) =>
+    `<span>${nome}</span><div class="barra"><i style="width:${n[k] || 0}%"></i></div><b>${n[k] ?? "—"}</b>`).join("")}</div>`;
+}
+const vistas = p => p.vistas == null ? "" : ` · ${Number(p.vistas).toLocaleString("pt-BR")} visualizações`;
 function seloPlataforma(nome, p) {
   const tipo = {publicado: "ok", "na fila": "info", falhou: "erro", teste: ""}[p.situacao];
   const texto = p.situacao === "teste" ? "não enviado" : p.situacao;
-  return `<span class="selo ${tipo}" title="${e(p.erro)}">${nome}: ${texto}</span>`;
+  return `<span class="selo ${tipo}" title="${e(p.erro)}">${nome}: ${texto}${vistas(p)}</span>`;
 }
 function cartaoCorte(c) {
   return `${c.existe ? `<video src="/midia/${c.id}" controls preload="metadata" playsinline></video>`
@@ -331,7 +343,8 @@ function cartaoCorte(c) {
     <div class="corpo">
       <div class="linha"><span class="nota">${Math.round(c.nota)}</span><span class="sub">nota · ${tempo(c.inicio)}–${tempo(c.fim)} · ${ha(c.criado)}</span></div>
       <h4>${e(c.titulo)}</h4>
-      <div class="sub">${e(c.descricao.split("\n")[0])}</div>
+      ${c.gancho ? `<div class="sub">Gancho: “${e(c.gancho)}”</div>` : ""}
+      ${criterios(c.notas)}
       <div class="linha">${c.teste ? '<span class="selo teste">Teste</span>' : seloPlataforma("YouTube", c.yt) + seloPlataforma("Instagram", c.ig)}</div>
       <div class="acoes">
         ${c.teste ? `<button class="btn mini principal" data-acao="corte/aprovar" data-id="${c.id}" data-ok="Corte enviado para a fila de publicação.">Aprovar e publicar</button>` : ""}
@@ -360,7 +373,7 @@ function cartaoConta(p, nome, c) {
 function celula(c, p, conta) {
   const s = c[p];
   if (s.situacao === "publicado")
-    return `<div class="celula"><span class="selo ok">Publicado</span><span class="sub">${ha(s.quando)}${s.link ? ` · <a href="${e(s.link)}" target="_blank" rel="noopener">abrir</a>` : ""}</span></div>`;
+    return `<div class="celula"><span class="selo ok">Publicado</span><span class="sub">${ha(s.quando)}${vistas(s)}${s.link ? ` · <a href="${e(s.link)}" target="_blank" rel="noopener">abrir</a>` : ""}</span></div>`;
   const pode = conta.ativo && conta.conectado && c.existe;
   const botao = pode ? `<button class="btn mini" data-acao="corte/publicar" data-id="${c.id}" data-plataforma="${p}" data-ok="Publicação iniciada.">${s.situacao === "falhou" ? "Tentar de novo" : "Publicar agora"}</button>` : "";
   const selo = s.situacao === "falhou" ? '<span class="selo erro">Falhou</span>'
@@ -389,6 +402,8 @@ function desenhar() {
 
   const selos = `<span class="selo ${s.ia ? "ok" : "alerta"}" title="${s.ia ? "" : "Defina ANTHROPIC_API_KEY no .env"}">IA ${s.ia ? "ligada" : "desligada"}</span>
     <span class="selo ${s.whisper ? "ok" : ""}" title="${s.whisper ? "" : "Instale faster-whisper para legendar vídeos sem legenda e lives"}">Legendas ${s.whisper ? "automáticas" : "só do YouTube"}</span>
+    <span class="selo ${s.rostos ? "ok" : ""}" title="${s.rostos ? "O corte segue os rostos da cena" : "Instale opencv-python-headless para o corte seguir os rostos"}">Enquadramento ${s.rostos ? "inteligente" : "simples"}</span>
+    ${s.aprendendo ? '<span class="selo ok" title="A IA recebe os cortes mais e menos vistos do canal como referência">Aprendendo com o canal</span>' : ""}
     <label class="chave verde"><input type="checkbox" id="auto" ${s.publicacao_auto ? "checked" : ""}> Publicação automática</label>`;
   if ($("#selos")._html !== selos) { $("#selos").innerHTML = selos; $("#selos")._html = selos; }
 

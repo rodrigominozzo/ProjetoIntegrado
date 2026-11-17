@@ -5,6 +5,7 @@ requests
 anthropic
 google-api-python-client
 google-auth-oauthlib
+opencv-python-headless<5   # enquadramento que segue rostos (a versão 5 removeu o detector usado)
 # Opcionais (recomendados):
 # chat-downloader    -> chat de lives em tempo real
 # faster-whisper     -> legendas quando o vídeo não tem legenda do YouTube (e em lives)

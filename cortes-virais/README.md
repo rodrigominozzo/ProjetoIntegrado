@@ -14,8 +14,9 @@ descoberta ─► captura ─► sinais ─► candidatos ─► IA (nota, títu
 |---|---|
 | Descoberta | Lives e gravações dos canais configurados, ou busca aberta por mais exibições, ou link direto. |
 | Sinais | **Chat** (ritmo de mensagens, com peso para "KKKK", "clipa", emojis), **áudio** (gritos, risadas) e o gráfico **"mais repetidos"** do YouTube. Cada um é medido contra a linha de base do próprio vídeo. |
-| IA | Claude vê quadros, transcrição e chat de cada candidato; dá nota de 0 a 100, ajusta as bordas, escreve título, descrição e hashtags, e reprova trechos sem graça ou arriscados. |
-| Render | 1080×1920, fundo desfocado, legendas grandes, áudio nivelado, crédito ao canal. |
+| IA | Claude vê quadros, transcrição e chat de cada candidato; dá nota geral e por critério (gancho, emoção, clareza, compartilhável), ajusta início e fim para começar no gancho, escreve a frase de gancho, título, descrição e hashtags, e reprova trechos sem graça ou arriscados. |
+| Render | 1080×1920 com enquadramento que segue os rostos, gancho fixo no topo, legendas karaokê, áudio nivelado, crédito ao canal. |
+| Aprendizado | De hora em hora mede as visualizações dos cortes publicados; a partir de 8 cortes medidos, a IA recebe os mais e os menos vistos do canal como referência. |
 | Publicação | Fila com limite diário por plataforma. Cortes de live são publicados na hora; os de vídeo gravado são espaçados. |
 
 **Live:** o ffmpeg grava a transmissão num buffer circular de 5 min. A cada 2 s o
@@ -24,6 +25,17 @@ detector compara chat e volume com os últimos minutos; num pico, recorta
 
 **Vídeo gravado:** analisa o vídeo inteiro, gera o triplo de candidatos necessários
 e fica com os de melhor nota.
+
+### Enquadramento automático (`formato: auto`)
+
+| Cena detectada | Layout |
+|---|---|
+| Uma pessoa falando | Recorte 9:16 centrado no rosto |
+| Duas pessoas (podcast, entrevista) | Uma em cima, outra embaixo |
+| Rosto pequeno num canto (gameplay com facecam) | Câmera em cima, jogo embaixo |
+| Nenhum rosto consistente | Vídeo inteiro sobre fundo desfocado |
+
+O layout é escolhido uma vez por corte. Não há troca de enquadramento conforme quem fala.
 
 ## Instalação
 
@@ -98,6 +110,10 @@ Para rodar 24 h, deixe `python -m cortes auto` num servidor (systemd, tmux ou Do
   auditoria de conformidade da API (formulário do Google).
 - **Cota do YouTube.** A cota padrão permite poucos uploads por dia (`max_por_dia: 6`);
   cada consulta da busca aberta custa 100 das 10 000 unidades diárias.
+- **Monetização.** O YouTube nega monetização a "conteúdo reutilizado" mesmo com
+  autorização do dono, e passou a distribuir menos os Shorts repostados. Gancho, legenda
+  e reenquadramento ajudam na retenção, mas o que a política pede é contribuição própria
+  (comentário, narração, análise). Isso o sistema ainda não gera.
 - **Sem chat nem "mais repetidos"** (vídeo comum, pouco assistido), a detecção usa só o
   áudio, e a IA passa a ser o filtro principal.
 

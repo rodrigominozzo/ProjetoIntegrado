@@ -79,8 +79,13 @@ def test_bordas_e_legendas():
                 (4.2, 4.6, "demais")]
     ini, fim = transcricao.ajustar_bordas(palavras, 1.5, 3.5)
     assert ini == pytest.approx(1.9) and fim == pytest.approx(3.05)
-    ass = transcricao.gerar_ass(palavras, 0, 5, 1080, 1920, credito="Créditos: Canal")
+    ass = transcricao.gerar_ass(palavras, 0, 5, 1080, 1920, credito="Créditos: Canal",
+                                gancho="Ninguém esperava", karaoke=False)
     assert "ISSO FOI" in ass and "MUITO BOM" in ass and "Créditos: Canal" in ass
+    assert "Gancho,,0,0,0,,Ninguém esperava" in ass
+    karaoke = transcricao.gerar_ass(palavras, 0, 5, 1080, 1920, cor_destaque="#FFE000")
+    assert "{\\c&H00E0FF&}ISSO{\\c&HFFFFFF&} FOI" in karaoke   # 1ª palavra em destaque
+    assert "ISSO {\\c&H00E0FF&}FOI{\\c&HFFFFFF&}" in karaoke   # depois a 2ª
 
 
 def test_video_gravado_ponta_a_ponta(video, tmp_path):
@@ -186,3 +191,38 @@ def test_painel_modo_teste(video, tmp_path):
     assert chamar("/api/corte/aprovar", {"id": corte["id"]}, painel_ok)[0] == 200
     assert len(banco.pendentes("yt")) == 1
     servidor.shutdown()
+
+
+def test_layouts_por_rosto():
+    from cortes import enquadramento as enq
+
+    def cena(*rostos, quadros=10):
+        return [list(rostos) for _ in range(quadros)]
+
+    assert enq.classificar(cena())["tipo"] == "blur"
+    assert enq.classificar(cena((0.45, 0.4, 0.2, 0.3)))["tipo"] == "rosto"
+    dupla = enq.classificar(cena((0.75, 0.4, 0.15, 0.25), (0.25, 0.42, 0.14, 0.24)))
+    assert dupla["tipo"] == "dupla" and dupla["pessoas"][0]["cx"] < dupla["pessoas"][1]["cx"]
+    assert enq.classificar(cena((0.1, 0.82, 0.07, 0.12)))["tipo"] == "facecam"
+    # rosto que aparece em poucos quadros é ruído
+    ruido = [[(0.5, 0.5, 0.2, 0.3)]] + [[] for _ in range(9)]
+    assert enq.classificar(ruido)["tipo"] == "blur"
+    for layout in (dupla, enq.classificar(cena((0.1, 0.82, 0.07, 0.12)))):
+        assert "vstack" in enq.filtro(layout, 1920, 1080)
+
+
+def test_ia_recebe_referencias_do_canal(tmp_path):
+    from cortes import desempenho
+
+    banco = Banco(tmp_path / "e.db")
+    assert desempenho.referencias(banco) == ""          # sem dados, não inventa
+    for i in range(9):
+        cid = banco.novo_corte(video_id="v", origem="vod", inicio=0, fim=30, nota=80,
+                               titulo=f"Corte {i}", descricao="", hashtags=[], arquivo="x.mp4",
+                               gancho=f"Gancho {i}")
+        banco.publicado(cid, "yt", f"yt{i}")
+        banco._exec("UPDATE cortes SET yt_em=? WHERE id=?", (time.time() - 2 * 86400, cid))
+        banco.medir("yt", f"yt{i}", vistas=1000 * i, curtidas=i)
+    texto = desempenho.referencias(banco)
+    assert texto.index("Corte 8") < texto.index("Menos vistos") < texto.index("Corte 0")
+    assert 'gancho: "Gancho 8"' in texto

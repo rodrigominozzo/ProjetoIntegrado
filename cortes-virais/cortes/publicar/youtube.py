@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-ESCOPOS = ["https://www.googleapis.com/auth/youtube.upload"]
+ESCOPOS = ["https://www.googleapis.com/auth/youtube.upload",
+           "https://www.googleapis.com/auth/youtube.readonly"]  # leitura: medir visualizações
 
 
 def _credenciais(cfg_yt: dict, interativo: bool = False):

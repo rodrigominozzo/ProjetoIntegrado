@@ -100,12 +100,23 @@ def _tempo(t: float) -> str:
     return f"{int(t // 3600)}:{int(t % 3600 // 60):02d}:{t % 60:05.2f}"
 
 
+def _cor_ass(hexa: str) -> str:
+    """#RRGGBB -> &HBBGGRR& (formato de cor do ASS)."""
+    h = hexa.lstrip("#")
+    return f"&H{h[4:6]}{h[2:4]}{h[0:2]}&".upper()
+
+
 def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: int, altura: int,
-              credito: str = "") -> str:
-    """Legendas em blocos curtos e grandes, no estilo de vídeos curtos."""
+              credito: str = "", gancho: str = "", posicao: dict | None = None,
+              karaoke: bool = True, cor_destaque: str = "#FFE000") -> str:
+    """Legendas no estilo de vídeos curtos: blocos de até 3 palavras, com a palavra falada
+    em destaque (karaokê), gancho fixo no topo e crédito discreto no rodapé."""
     vertical = altura > largura
-    tamanho = 76 if vertical else 58
-    margem = int(altura * 0.22) if vertical else int(altura * 0.08)
+    posicao = posicao or {"fala": ("baixo", 0.22 if vertical else 0.08), "gancho": 0.15}
+    tamanho = 78 if vertical else 58
+    onde, fracao = posicao["fala"]
+    alinhamento = {"baixo": 2, "meio": 5, "topo": 8}[onde]
+    margem = int(altura * fracao)
     linhas = [
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {largura}", f"PlayResY: {altura}",
         "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
@@ -114,14 +125,20 @@ def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: i
         " Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline,"
         " Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         f"Style: Fala,DejaVu Sans,{tamanho},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,"
-        f"-1,0,0,0,100,100,0,0,1,6,2,2,60,60,{margem},1",
-        f"Style: Credito,DejaVu Sans,{int(tamanho * 0.42)},&H00FFFFFF,&H00FFFFFF,&H00000000,"
-        f"&H80000000,0,0,0,0,100,100,0,0,1,3,1,8,40,40,{int(altura * 0.06)},1",
+        f"-1,0,0,0,100,100,0,0,1,6,2,{alinhamento},60,60,{margem},1",
+        # Gancho: texto escuro sobre caixa branca, como nos canais de cortes.
+        f"Style: Gancho,DejaVu Sans,{int(tamanho * 0.72)},&H00101010,&H00101010,&H00FFFFFF,"
+        f"&H00FFFFFF,-1,0,0,0,100,100,0,0,3,14,0,8,70,70,{int(altura * posicao['gancho'])},1",
+        f"Style: Credito,DejaVu Sans,{int(tamanho * 0.36)},&H40FFFFFF,&H00FFFFFF,&H00000000,"
+        f"&H80000000,0,0,0,0,100,100,0,0,1,3,1,2,40,40,{int(altura * 0.025)},1",
         "", "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     if credito:
         linhas.append(f"Dialogue: 0,{_tempo(0)},{_tempo(duracao)},Credito,,0,0,0,,{_limpar(credito)}")
+    if gancho:
+        linhas.append(f"Dialogue: 2,{_tempo(0)},{_tempo(duracao)},Gancho,,0,0,0,,"
+                      f"{_limpar(gancho)}")
     bloco: list[Palavra] = []
     blocos: list[list[Palavra]] = []
     for p in recorte(palavras, inicio, inicio + duracao):
@@ -131,6 +148,7 @@ def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: i
         bloco.append(p)
     if bloco:
         blocos.append(bloco)
+    cor = _cor_ass(cor_destaque)
     for i, b in enumerate(blocos):
         a = b[0][0] - inicio
         fim = min(b[-1][1] - inicio + 0.15, duracao)
@@ -138,8 +156,18 @@ def gerar_ass(palavras: list[Palavra], inicio: float, duracao: float, largura: i
             fim = min(fim, blocos[i + 1][0][0] - inicio)
         if fim - a < 0.1:
             continue
-        frase = _limpar(" ".join(p[2] for p in b)).upper()
-        linhas.append(f"Dialogue: 1,{_tempo(a)},{_tempo(fim)},Fala,,0,0,0,,{frase}")
+        termos = [_limpar(p[2]).upper() for p in b]
+        if not karaoke:
+            linhas.append(f"Dialogue: 1,{_tempo(a)},{_tempo(fim)},Fala,,0,0,0,,{' '.join(termos)}")
+            continue
+        for k, p in enumerate(b):  # um evento por palavra, com ela em destaque
+            t0 = a if k == 0 else p[0] - inicio
+            t1 = fim if k + 1 == len(b) else b[k + 1][0] - inicio
+            if t1 - t0 < 0.03:
+                continue
+            frase = " ".join(f"{{\\c{cor}}}{t}{{\\c&HFFFFFF&}}" if j == k else t
+                             for j, t in enumerate(termos))
+            linhas.append(f"Dialogue: 1,{_tempo(t0)},{_tempo(t1)},Fala,,0,0,0,,{frase}")
     return "\n".join(linhas) + "\n"
 
 

@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from . import chat as chat_mod
-from . import fontes, ia, publicar, sinais, transcricao, vod
+from . import desempenho, fontes, ia, publicar, sinais, transcricao, vod
 from .banco import Banco
 
 log = logging.getLogger(__name__)
@@ -106,8 +106,10 @@ class MonitorLive:
                 "inicio": pedido["a"] - self._t0, "fim": pedido["b"] - self._t0,
                 "inicio_arquivo": ini_arq, "fim_arquivo": ini_arq + dur,
                 "pontuacao": pedido["nota"], "transcricao": transcricao.texto(falas),
+                "folga_inicio": min(8, ini_arq), "folga_fim": 0,  # o buffer acaba no fim do trecho
                 "chat": [m for _, m in pedido["mensagens"] if m][-25:],
             }
+            self.meta["referencias"] = desempenho.referencias(self.banco)
             avaliado = ia.avaliar([candidato], self.meta, pedido["bruto"], cfg)
             c = avaliado[0] if avaliado else None
             if not c or not c["aprovado"] or c["nota"] < cfg["ia"]["nota_minima"]:

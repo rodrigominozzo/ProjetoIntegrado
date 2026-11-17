@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote
 
-from . import fontes, ia, publicar, transcricao, vod
+from . import desempenho, enquadramento, fontes, ia, publicar, transcricao, vod
 from .banco import MAX_TENTATIVAS, Banco
 from .live import MonitorLive
 
@@ -33,6 +33,7 @@ class Gerenciador:
         self._fila = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analise")
         self._seq = itertools.count(1)
         self._ultima_busca = 0.0
+        self._ultima_medida = 0.0
         threading.Thread(target=self._laco, daemon=True, name="painel-laco").start()
 
     # --- entrada de links ---
@@ -125,6 +126,9 @@ class Gerenciador:
             time.sleep(30)
             try:
                 publicar.publicar_pendentes(self.cfg, self.banco)
+                if time.time() - self._ultima_medida >= 3600:
+                    self._ultima_medida = time.time()
+                    desempenho.atualizar(self.cfg, self.banco)
                 if time.time() - self._ultima_busca >= self.cfg["auto"]["intervalo_min"] * 60:
                     self._ultima_busca = time.time()
                     self._buscar_nos_canais()
@@ -173,7 +177,8 @@ class Gerenciador:
                 "hashtags": json.loads(c["hashtags"] or "[]"), "nota": c["nota"],
                 "inicio": c["inicio"], "fim": c["fim"], "origem": c["origem"],
                 "teste": bool(c["teste"]), "criado": c["criado"],
-                "existe": Path(c["arquivo"]).exists(),
+                "existe": Path(c["arquivo"]).exists(), "gancho": c["gancho"] or "",
+                "notas": json.loads(c["notas"] or "{}"), "layout": c["layout"] or "",
             }
             for p in ("yt", "ig"):
                 if c[f"{p}_id"]:
@@ -186,7 +191,8 @@ class Gerenciador:
                     situacao = "na fila"
                 item[p] = {"situacao": situacao, "link": c[f"{p}_link"] or "",
                            "erro": c[f"{p}_erro"] or "", "quando": c[f"{p}_em"],
-                           "tentativas": c[f"{p}_tentativas"]}
+                           "tentativas": c[f"{p}_tentativas"], "vistas": c[f"{p}_vistas"],
+                           "curtidas": c[f"{p}_curtidas"]}
             grupo = grupos.setdefault(c["video_id"], {
                 "video_id": c["video_id"], "titulo": c["video_titulo"] or c["video_id"],
                 "canal": c["canal"] or "", "origem": c["origem"], "cortes": []})
@@ -207,6 +213,8 @@ class Gerenciador:
             "contas": contas, "canais": [dict(c) for c in self.banco.canais()],
             "publicacao_auto": self.banco.opcao("publicacao_auto", "1") == "1",
             "ia": ia.disponivel(self.cfg), "whisper": transcricao.whisper_disponivel(),
+            "rostos": enquadramento.disponivel(),
+            "aprendendo": bool(desempenho.referencias(self.banco)),
             "intervalo_min": self.cfg["publicar"]["intervalo_min"],
         }
 

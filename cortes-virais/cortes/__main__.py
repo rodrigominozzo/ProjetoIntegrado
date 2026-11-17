@@ -7,7 +7,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, fontes, publicar, vod
+from . import config, desempenho, fontes, publicar, vod
 from .banco import Banco
 from .live import MonitorLive
 
@@ -20,6 +20,7 @@ def _auto(cfg: dict, banco: Banco) -> None:
     while True:
         try:
             publicar.publicar_pendentes(cfg, banco)
+            desempenho.atualizar(cfg, banco)
             for achado in fontes.descobrir(cfg):
                 lives = {k: t for k, t in lives.items() if t.is_alive()}
                 if achado["ao_vivo"]:

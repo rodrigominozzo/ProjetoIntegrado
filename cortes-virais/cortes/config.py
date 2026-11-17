@@ -19,11 +19,16 @@ PADRAO = {
         "busca": {"consultas": ["live"], "regiao": "BR", "max_resultados": 10, "dias": 2},
     },
     "cortes": {
-        "duracao": 30,
+        "duracao": 30,          # alvo; a IA pode ajustar dentro de duracao_min..duracao_max
+        "duracao_min": 20,
+        "duracao_max": 45,
         "por_video": 5,
         "intervalo_minimo": 45,  # segundos entre o início de dois cortes
-        "formato": "vertical_blur",  # vertical_blur | vertical_crop | original
+        "formato": "auto",  # auto (segue rostos) | vertical_blur | vertical_crop | original
         "legendas": True,
+        "karaoke": True,          # destaca a palavra que está sendo falada
+        "cor_destaque": "#FFE000",
+        "gancho": True,           # frase de impacto fixa no topo do vídeo
         "altura_max": 1080,
         "apagar_fonte": True,
     },

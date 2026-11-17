@@ -16,10 +16,15 @@ fontes:
     dias: 2
 
 cortes:
-  duracao: 30            # segundos
+  duracao: 30            # alvo, em segundos
+  duracao_min: 20        # a IA pode encurtar ou estender o corte dentro desta faixa
+  duracao_max: 45        # para começar no gancho e terminar no desfecho
   por_video: 5
-  formato: vertical_blur # vertical_blur | vertical_crop | original
+  formato: auto          # auto (segue rostos) | vertical_blur | vertical_crop | original
   legendas: true
+  karaoke: true          # destaca a palavra que está sendo falada
+  cor_destaque: "#FFE000"
+  gancho: true           # frase de impacto fixa no topo (escrita pela IA)
 
 ia:
   ativa: true

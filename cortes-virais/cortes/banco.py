@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS canais (
 CREATE TABLE IF NOT EXISTS opcoes (chave TEXT PRIMARY KEY, valor TEXT);
 """
 # Colunas acrescentadas depois da primeira versão.
-MIGRACOES = ["teste INTEGER DEFAULT 0", "yt_link TEXT", "ig_link TEXT"]
+MIGRACOES = ["teste INTEGER DEFAULT 0", "yt_link TEXT", "ig_link TEXT", "gancho TEXT",
+             "notas TEXT", "layout TEXT", "yt_vistas INTEGER", "yt_curtidas INTEGER",
+             "ig_vistas INTEGER", "ig_curtidas INTEGER"]
 MAX_TENTATIVAS = 3
 
 
@@ -65,12 +67,15 @@ class Banco:
 
     # --- cortes ---
     def novo_corte(self, *, video_id, origem, inicio, fim, nota, titulo, descricao,
-                   hashtags, arquivo, urgente=False, teste=False) -> int:
+                   hashtags, arquivo, urgente=False, teste=False, gancho="", notas=None,
+                   layout="") -> int:
         cur = self._exec(
             "INSERT INTO cortes (video_id, origem, inicio, fim, nota, titulo, descricao, hashtags,"
-            " arquivo, urgente, teste, criado) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            " arquivo, urgente, teste, gancho, notas, layout, criado)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (video_id, origem, inicio, fim, nota, titulo, descricao, json.dumps(hashtags),
-             str(arquivo), int(urgente), int(teste), time.time()),
+             str(arquivo), int(urgente), int(teste), gancho, json.dumps(notas or {}), layout,
+             time.time()),
         )
         return cur.lastrowid
 
@@ -120,6 +125,25 @@ class Banco:
     def remover_testes(self, video_id: str) -> None:
         for c in self._linhas("SELECT id FROM cortes WHERE video_id=? AND teste=1", (video_id,)):
             self.remover_corte(c["id"])
+
+    # --- desempenho ---
+    def ids_publicados(self, plataforma: str, dias: int = 30) -> list[str]:
+        linhas = self._linhas(
+            f"SELECT {plataforma}_id i FROM cortes WHERE {plataforma}_id IS NOT NULL"
+            f" AND {plataforma}_em >= ?", (time.time() - dias * 86400,))
+        return [l["i"] for l in linhas]
+
+    def medir(self, plataforma: str, id_remoto: str, vistas: int, curtidas: int) -> None:
+        self._exec(f"UPDATE cortes SET {plataforma}_vistas=?, {plataforma}_curtidas=?"
+                   f" WHERE {plataforma}_id=?", (vistas, curtidas, id_remoto))
+
+    def cortes_medidos(self) -> list[dict]:
+        """Cortes com visualizações conhecidas (soma das plataformas)."""
+        linhas = self._linhas(
+            "SELECT titulo, gancho, COALESCE(yt_vistas,0)+COALESCE(ig_vistas,0) vistas,"
+            " COALESCE(yt_em, ig_em) publicado FROM cortes"
+            " WHERE yt_vistas IS NOT NULL OR ig_vistas IS NOT NULL")
+        return [dict(l) for l in linhas]
 
     # --- canais confiáveis e opções ---
     def canal_confiavel(self, canal_id: str, nome: str) -> None:
