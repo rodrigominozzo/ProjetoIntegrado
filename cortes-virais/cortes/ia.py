@@ -564,12 +564,21 @@ def _extrair_json(texto: str | None) -> dict | None:
     return dados if isinstance(dados, dict) else None
 
 
+# Quando um modelo sai do catálogo da NVIDIA (erro 410/404), o programa passa sozinho para o
+# próximo desta lista que vê imagens, em vez de cair nas notas pelas métricas (em 25/11/2026
+# o Gemma 4 saiu do ar e as lives ficaram com nota 99 "das métricas").
+SUBSTITUTOS_NVIDIA = ["nvidia/nemotron-3.5-super-vl-120b-a12b", "moonshotai/kimi-k3.1-pro", "minimaxai/minimax-m3.1-flash"]
+_substituto: dict[str, str] = {}
+
+
 def _pedir_compativel(modelo: str, sistema: str, conteudo: list[dict], esquema: dict,
-                      prov: dict) -> dict | None:
+                      prov: dict, _tentados: tuple = ()) -> dict | None:
     """Chamada a uma API no padrão da OpenAI (NVIDIA). O esquema vai no próprio pedido, porque
     nem todo modelo aberto aceita saída estruturada; a resposta é conferida antes de usar."""
     import requests
 
+    original = modelo
+    modelo = _substituto.get(modelo, modelo)
     nome = prov["nome"]
     instrucao = ("\n\nResponda somente com um objeto JSON válido, sem texto antes ou depois e sem "
                  "blocos de código, seguindo exatamente este esquema JSON:\n"
@@ -597,8 +606,16 @@ def _pedir_compativel(modelo: str, sistema: str, conteudo: list[dict], esquema: 
             _falha(logging.WARNING, "Limite de uso da %s atingido (%s). Tente de novo em "
                    "alguns minutos.", nome, modelo)
             return None
-        if r.status_code == 404:
-            _falha(logging.WARNING, "A %s não tem o modelo %s. Escolha outro na aba "
+        if r.status_code in (404, 410):
+            tentados = (*_tentados, modelo)
+            proximo = next((m for m in SUBSTITUTOS_NVIDIA if m not in tentados), None) \
+                if prov is PROVEDORES.get("nvidia") else None
+            if proximo:
+                _substituto[original] = proximo
+                log.warning("O modelo %s saiu do ar na %s (%s); usando %s até você escolher "
+                            "outro em Configurações.", modelo, nome, r.status_code, proximo)
+                return _pedir_compativel(proximo, sistema, conteudo, esquema, prov, tentados)
+            _falha(logging.WARNING, "A %s não tem mais o modelo %s. Escolha outro na aba "
                    "Configurações.", nome, modelo)
             return None
         if r.status_code in (400, 422) and n + 1 < len(tentativas):

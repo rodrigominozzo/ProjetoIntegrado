@@ -642,9 +642,9 @@ def test_ajustes_provedor_da_ia(tmp_path):
 
     cfg = _cfg(tmp_path)
     arq = tmp_path / "c.yaml"
-    ajustes.salvar(cfg, {"ia.provedor": "nvidia", "ia.nvidia.modelos.final": "google/gemma-4-31b-it"}, arq)
+    ajustes.salvar(cfg, {"ia.provedor": "nvidia", "ia.nvidia.modelos.final": "moonshotai/kimi-k3.1-pro"}, arq)
     assert cfg["ia"]["provedor"] == "nvidia"
-    assert config.carregar(arq)["ia"]["nvidia"]["modelos"]["final"] == "google/gemma-4-31b-it"
+    assert config.carregar(arq)["ia"]["nvidia"]["modelos"]["final"] == "moonshotai/kimi-k3.1-pro"
     with pytest.raises(ValueError, match="Opção inválida"):
         ajustes.salvar(cfg, {"ia.provedor": "outro"}, arq)
     assert "NVIDIA_API_KEY" in ajustes.CHAVES
@@ -1772,3 +1772,34 @@ def test_video_removido_pelos_avisos_e_longo_demais(tmp_path, monkeypatch):
             break
         time.sleep(0.05)
     assert t["status"] == "erro" and "6.1 h" in t["erro"] and "Vídeo mais longo aceito" in t["erro"]
+
+
+def test_modelo_nvidia_fora_do_ar_troca_sozinho(monkeypatch):
+    """Modelo retirado do catálogo (410): passa para o próximo que vê imagens, em vez de cair
+    nas notas pelas métricas (25/11/2026: Gemma 4 saiu do ar e as notas viraram 99)."""
+    import requests
+    from cortes import ia
+
+    pedidos = []
+
+    class Resp:
+        def __init__(self, status, corpo):
+            self.status_code, self._corpo, self.text = status, corpo, json.dumps(corpo)
+
+        def json(self):
+            return self._corpo
+
+    def post(url, json=None, **k):
+        pedidos.append(json["model"])
+        if json["model"] == "google/gemma-4-31b-it":
+            return Resp(410, {"detail": "has reached its end of life"})
+        return Resp(200, {"choices": [{"finish_reason": "stop", "message": {"content": '{"ok": true}'}}]})
+
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(ia, "_substituto", {})
+    esquema = {"type": "object", "required": ["ok"]}
+    conteudo = [{"type": "text", "text": "oi"}]
+    assert ia._pedir_compativel("google/gemma-4-31b-it", "s", conteudo, esquema, ia.PROVEDORES["nvidia"]) == {"ok": True}
+    assert pedidos == ["google/gemma-4-31b-it", ia.SUBSTITUTOS_NVIDIA[0]]
+    ia._pedir_compativel("google/gemma-4-31b-it", "s", conteudo, esquema, ia.PROVEDORES["nvidia"])
+    assert pedidos[-1] == ia.SUBSTITUTOS_NVIDIA[0]                        # lembra a troca

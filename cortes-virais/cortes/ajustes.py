@@ -19,8 +19,9 @@ MODELOS = [
 
 # Catálogo gratuito do build.nvidia.com (muda com o tempo; dá para pôr outro no config.yaml).
 MODELOS_NVIDIA = [
-    ["google/gemma-4-31b-it", "Gemma 4 31B — vê imagens, bom em português, rápido (recomendado)"],
-    ["nvidia/nemotron-3.5-super-vl-120b-a12b", "Nemotron 3.5 Super VL — vê imagens, mas recusa cenas violentas e às vezes estoura a resposta"],
+    ["nvidia/nemotron-3.5-super-vl-120b-a12b", "Nemotron 3.5 Super VL — vê imagens, rápido (~6 s): recomendado para a triagem e a live"],
+    ["moonshotai/kimi-k3.1-pro", "Kimi K3.1 Pro — vê imagens, escreve melhor, lento (~1 min): recomendado para o final"],
+    ["minimaxai/minimax-m3.1-flash", "MiniMax M3.1 Flash — vê imagens, o mais rápido, às vezes fora do ar"],
     ["mistralai/mistral-large-4-1t-a52b", "Mistral Large 4 — só texto, escreve bem"],
     ["nvidia/nemotron-3-ultra-550b-a55b", "Nemotron 3 Ultra — só texto, o maior"],
     ["z-ai/glm-5.3-flash", "GLM 5.3 Flash — só texto, rápido"],

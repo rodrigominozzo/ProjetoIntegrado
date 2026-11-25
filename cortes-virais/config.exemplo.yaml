@@ -62,9 +62,9 @@ ia:
   provedor: anthropic    # anthropic (Claude, pago) | nvidia (NVIDIA Build, gratuito para testes)
   nvidia:                # modelos usados quando provedor: nvidia (chave NVIDIA_API_KEY)
     modelos:
-      triagem: google/gemma-4-31b-it
-      ao_vivo: google/gemma-4-31b-it
-      final: google/gemma-4-31b-it
+      triagem: nvidia/nemotron-3.5-super-vl-120b-a12b
+      ao_vivo: nvidia/nemotron-3.5-super-vl-120b-a12b
+      final: moonshotai/kimi-k3.1-pro
 
 live:
   limiar: 4.0            # menor = mais cortes (e mais falsos positivos)

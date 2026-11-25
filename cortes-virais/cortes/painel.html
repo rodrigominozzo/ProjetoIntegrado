@@ -516,6 +516,7 @@ function cartaoCorte(c) {
       ${c.gancho ? `<div class="sub">Gancho: “${e(c.gancho)}”</div>` : ""}
       ${c.narracao ? `<div class="sub">Narração: “${e(c.narracao)}”</div>` : ""}
       ${criterios(c.notas)}
+      ${Object.keys(c.notas || {}).length ? "" : `<div class="sub" title="A IA de nuvem estava fora do ar quando este corte foi feito: a nota vem da empolgação, do volume e do chat, numa escala própria que costuma bater no teto (99). Cortes assim nunca são publicados sozinhos.">⚠ Nota pelas métricas, sem IA: não compare com as notas da IA</div>`}
       <div class="linha">${c.teste ? '<span class="selo teste">Teste</span>' : seloPlataforma("YouTube", c.yt, c, "yt") + seloPlataforma("Instagram", c.ig, c, "ig") + seloPlataforma("TikTok", c.tt, c, "tt")}</div>
       <div class="acoes">
         ${botoesDecisao(c)}

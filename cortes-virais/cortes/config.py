@@ -62,9 +62,10 @@ PADRAO = {
         "local_modelo": "",
         # Modelos abertos da NVIDIA; os que veem imagens avaliam melhor os quadros do vídeo.
         # (O Nemotron VL pensa demais e estoura a resposta, e recusa imagens de jogos violentos.)
-        "nvidia": {"modelos": {"triagem": "google/gemma-4-31b-it",
-                               "ao_vivo": "google/gemma-4-31b-it",
-                               "final": "google/gemma-4-31b-it"}},
+        # O Gemma 4 31B saiu do catálogo em 24/11/2026 (erro 410).
+        "nvidia": {"modelos": {"triagem": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+                               "ao_vivo": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+                               "final": "moonshotai/kimi-k3.1-pro"}},
     },
     "edicao": {
         "dinamica": True,          # troca de plano e zoom ao longo do corte
