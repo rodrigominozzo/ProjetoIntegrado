@@ -117,6 +117,40 @@ def melhores_janelas(pontuacao: np.ndarray, duracao: int, quantidade: int,
     return escolhidas
 
 
+def ajustar_ao_pico(pontuacao: np.ndarray, inicio: float, duracao: float, *, extra_fim: int = 20,
+                   extra_inicio: int = 8, depois_do_pico: int = 8, antes_do_pico: int = 6,
+                   fracao: float = 0.5, respiro: int = 3) -> tuple[float, float]:
+    """A janela de maior média costuma terminar com a empolgação ainda no alto (o corte
+    acabava antes de o pico baixar, sem a reação e a explicação que vêm depois). Aqui:
+    - o fim vai pelo menos `depois_do_pico` segundos além do ponto mais alto;
+    - se a curva (suavizada) ainda está alta no fim, estende até ela baixar, mais um respiro;
+    - se a janela já começa com a curva alta, recua até onde ela começou a subir.
+    Alta = acima de `fracao` do pico da janela. Devolve (início, fim) em segundos."""
+    serie = np.asarray(pontuacao, dtype=np.float64)
+    n = len(serie)
+    ini, fim = max(0, int(inicio)), min(n, int(round(inicio + duracao)))
+    if n == 0 or fim <= ini:
+        return float(inicio), float(inicio + duracao)
+    suave = np.convolve(serie, np.ones(5) / 5, mode="same")  # ignora quedas de 1–2 s no meio do pico
+    pos_pico = ini + int(np.argmax(serie[ini:fim]))
+    alto = fracao * float(suave[ini:fim].max())
+    if alto <= 0:
+        return float(ini), float(fim)
+    limite_fim = min(n, fim + extra_fim)
+    fim = min(limite_fim, max(fim, pos_pico + depois_do_pico))
+    estendeu = False
+    while fim < limite_fim and suave[fim - 1] >= alto:
+        fim += 1
+        estendeu = True
+    if estendeu:
+        fim = min(n, fim + respiro)
+    limite_ini = max(0, ini - extra_inicio)
+    ini = max(limite_ini, min(ini, pos_pico - antes_do_pico))
+    while ini > limite_ini and suave[ini] >= alto:
+        ini -= 1
+    return float(ini), float(fim)
+
+
 def analisar(*, audio: np.ndarray | None, mensagens: list[tuple[float, str]] | None,
              replay: list[dict] | None, duracao: float, cfg: dict) -> tuple[np.ndarray, dict]:
     """Pontuação por segundo e os sinais normalizados que a compõem."""

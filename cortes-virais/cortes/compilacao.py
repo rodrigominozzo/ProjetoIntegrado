@@ -129,6 +129,7 @@ def montar(video: Path, escolhidos: list[dict], meta: dict, cfg: dict, banco: Ba
         video_id=meta["id"], origem="compilacao", inicio=0, fim=fontes.duracao_arquivo(saida),
         nota=max(c["nota"] for c in ordem), titulo=f"Top {n} momentos — {meta['titulo']}"[:95],
         descricao=descricao, hashtags=marcas, arquivo=saida, teste=bool(meta.get("teste")),
-        layout="compilacao", narracao="Contagem regressiva narrada", capa=arq_capa)
+        layout="compilacao", narracao="Contagem regressiva narrada", capa=arq_capa,
+        aguardando=cfg["publicar"].get("manual", True) and not meta.get("teste"))
     log.info("Compilação %s pronta: %d momentos, %s.", corte_id, n, _marca(t))
     return corte_id

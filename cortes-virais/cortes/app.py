@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import logging
 import shutil
+import socket
 import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -28,11 +30,21 @@ AVISO_FECHAR = ("Ao fechar, o acompanhamento das lives e as análises param. "
 
 
 def _ja_aberto(porta: int) -> bool:
+    """Já existe um Cortes Virais nesta porta? Ocupado com uma análise, o painel pode demorar
+    a responder: porta em uso que não diz claramente ser outro programa conta como aberto,
+    para nunca subir uma 2ª cópia (ela repetiria as análises e travaria a 1ª)."""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{porta}/api/estado", timeout=2) as r:
-            return r.status == 200
+        with socket.create_connection(("127.0.0.1", porta), timeout=1):
+            pass
     except OSError:
-        return False
+        return False  # ninguém ouvindo: pode abrir
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{porta}/api/estado", timeout=20) as r:
+            return r.status == 200
+    except urllib.error.HTTPError:
+        return False  # respondeu, mas não é o painel: outro programa usa a porta
+    except OSError:
+        return True   # ocupado demais para responder agora: é o programa trabalhando
 
 
 def navegador_app() -> str | None:
@@ -111,6 +123,7 @@ def abrir(cfg: dict, banco: Banco, caminho_cfg: str = "config.yaml", porta: int 
         log.info("Encerrando: %d tarefas serão retomadas na próxima abertura.", ger.ativos())
         ger.encerrar()
         servidor.shutdown()
+        servidor.server_close()  # solta a porta já; sem isso ela fica presa e a próxima abertura trava
         time.sleep(1.5)  # dá tempo de as capturas fecharem os arquivos
 
 

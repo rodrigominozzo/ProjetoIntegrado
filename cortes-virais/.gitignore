@@ -2,8 +2,9 @@
 config.yaml
 client_secret.json
 youtube_token.json
-dados/
-vozes/
+tiktok_token.json
+/dados/
+/vozes/
 _fontes/
 __pycache__/
 .pytest_cache/

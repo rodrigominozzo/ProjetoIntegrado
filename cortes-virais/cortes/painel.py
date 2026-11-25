@@ -11,6 +11,8 @@ import itertools
 import json
 import logging
 import re
+import socket
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -21,7 +23,8 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from . import (ajustes, conhecimento,  # noqa: I001
                seguranca, desempenho, enquadramento, fontes, ia, narracao,
                publicar, transcricao, vod)
-from .banco import MAX_TENTATIVAS, Banco
+from .banco import MAX_TENTATIVAS, PLATAFORMAS, SO_CURTOS, Banco
+from .publicar import tiktok
 from .live import MonitorLive
 
 log = logging.getLogger(__name__)
@@ -35,10 +38,14 @@ class Gerenciador:
         self.caminho_cfg, self.porta = caminho_cfg, porta
         self._fluxo_youtube = None
         self._estado_youtube = ""
+        self._estado_tiktok = ""
+        self._verificador_tiktok: str | None = None
         self.senha = ""                      # definida só quando o painel é aberto à rede
         self.hosts_aceitos: set[str] = set()
         self._canal_yt: tuple[float, dict | None] = (0.0, None)
         self.tarefas: dict[str, dict] = {}
+        self.refazendo: dict[int, dict] = {}  # cortes sendo refeitos com outro começo/fim
+        self.trechos: dict[str, dict] = {}    # "video:posição" de trechos da análise sendo cortados
         self.lives: dict[str, MonitorLive] = {}
         self._trava = threading.RLock()
         self._fila = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analise")
@@ -55,10 +62,13 @@ class Gerenciador:
                      for m in self.lives.values()
                      if m.estado["status"] in {"conectando", "acompanhando"} and not m.parado_pelo_usuario]
             tarefas = [{"alvo": t["alvo"], "teste": t["teste"]} for t in self.tarefas.values()
-                       if t["status"] in {"identificando", "fila", "rodando"}]
+                       if t["status"] in {"identificando", "fila", "rodando", "pausado", "agendada"}
+                       and not t.get("cancelar")]
         return [x for x in lives + tarefas if re.match(r"https?://", x["alvo"])]
 
     def _guardar(self) -> None:
+        if getattr(self, "_encerrado", False):  # a lista final já foi gravada ao fechar
+            return
         self.banco.definir_opcao("em_andamento", json.dumps(self._em_andamento()))
 
     def _retomar(self) -> None:
@@ -70,14 +80,33 @@ class Gerenciador:
             log.info("Retomando %s", p["alvo"])
             self.enviar(p["alvo"], p["teste"], origem="retomado")
 
+    def _tentar_retomar_de_novo(self, tarefa: dict, como_live: bool, erro: Exception) -> bool:
+        """Na abertura do programa a rede e o yt-dlp às vezes ainda não estão prontos: uma
+        análise ou live retomada que falha ao ser identificada tenta de novo (3 vezes, com
+        espera crescente) em vez de sumir com erro."""
+        n = tarefa.get("tentativas_retomada", 0) + 1
+        if tarefa.get("origem") != "retomado" or n > 3 or tarefa.get("cancelar"):
+            return False
+        tarefa.update(tentativas_retomada=n, etapa=f"Tentando de novo ({n} de 3)…")
+        log.warning("Retomada de %s falhou (%s); tentando de novo (%d de 3).",
+                    tarefa["alvo"], _resumo(erro), n)
+        threading.Timer(15 * n, self._identificar, args=(tarefa, como_live)).start()
+        return True
+
     def ativos(self) -> int:
         return len(self._em_andamento())
 
     def encerrar(self) -> None:
-        """Fecha com ordem: guarda o que estava em andamento e para as capturas."""
+        """Fecha com ordem: guarda o que estava em andamento (para retomar ao abrir de novo),
+        para as capturas e interrompe as análises, para o programa não seguir trabalhando
+        escondido depois que a janela fecha."""
         self._guardar()
+        self._encerrado = True
         with self._trava:
             monitores = list(self.lives.values())
+            for t in self.tarefas.values():
+                if t["status"] in {"identificando", "fila", "rodando", "pausado", "agendada"}:
+                    t["cancelar"] = True
         for m in monitores:
             m.parar()
 
@@ -97,7 +126,7 @@ class Gerenciador:
             "id": f"t{next(self._seq)}", "alvo": alvo, "titulo": alvo, "canal": "", "teste": teste,
             "origem": origem, "status": "identificando", "etapa": "Identificando o vídeo",
             "fracao": None, "erro": "", "video_id": "", "cortes": 0, "inicio": time.time(),
-            "fim": None,
+            "fim": None, "como_live": como_live,
         }
         with self._trava:
             self.tarefas[tarefa["id"]] = tarefa
@@ -110,6 +139,12 @@ class Gerenciador:
             meta["teste"] = tarefa["teste"]
             # Link enviado por você = canal confiável para cortes.
             self.banco.canal_confiavel(meta["canal_id"], meta["canal"])
+            if meta.get("agendada") is not None:  # live que ainda vai começar: espera por ela
+                tarefa.update(titulo=meta["titulo"], canal=meta["canal"], video_id=meta["id"],
+                              status="agendada", inicio_live=meta["agendada"] or None,
+                              etapa="Aguardando a live começar")
+                self._esperar_live(tarefa)
+                return
             if meta["ao_vivo"] or como_live:
                 entrada = (["-re", "-i", meta["arquivo"], "-c", "copy"] if "arquivo" in meta else None)
                 self._iniciar_live(tarefa["alvo"], meta, entrada)
@@ -117,6 +152,12 @@ class Gerenciador:
                     del self.tarefas[tarefa["id"]]
                 return
             tarefa.update(titulo=meta["titulo"], canal=meta["canal"], video_id=meta["id"])
+            limite_h = float(self.cfg["fontes"].get("duracao_max_h", 6) or 0)
+            if tarefa["origem"] == "manual" and limite_h and meta["duracao"] > limite_h * 3600:
+                # Antes o vídeo era ignorado em silêncio e o cartão dizia "Concluído".
+                raise ValueError(
+                    f"Vídeo de {meta['duracao'] / 3600:.1f} h: passa do limite de {limite_h:g} h. "
+                    "Aumente “Vídeo mais longo aceito” em Configurações → Cortes e tente de novo.")
             # Um vídeo já cortado e publicado não é cortado de novo: evita posts repetidos.
             if not tarefa["teste"] and self.banco.status_video(meta["id"]) == "feito" \
                     and self.banco.tem_publicados(meta["id"]):
@@ -129,24 +170,109 @@ class Gerenciador:
             tarefa.update(status="fila", etapa="Na fila")
             self._fila.submit(self._analisar, tarefa, meta)
         except Exception as e:  # noqa: BLE001
+            if self._tentar_retomar_de_novo(tarefa, como_live, e):
+                return
             log.exception("Falha ao identificar %s", tarefa["alvo"])
             tarefa.update(status="erro", erro=_resumo(e), fim=time.time())
 
+    def _esperar_live(self, tarefa: dict, verificar_a_cada: float = 60.0, desistir_apos_h: float = 6.0) -> None:
+        """Live agendada: dorme até perto da hora marcada e então confere a cada minuto. Quando
+        ela entra no ar, começa a acompanhar sozinha. Cancelável pelo botão da tarefa."""
+        limite = (tarefa.get("inicio_live") or time.time()) + desistir_apos_h * 3600
+        while True:
+            if tarefa.get("cancelar"):
+                tarefa.update(status="cancelado", etapa="Cancelada", fim=time.time())
+                return
+            agora, marcada = time.time(), tarefa.get("inicio_live")
+            if marcada and marcada - agora > verificar_a_cada * 2:
+                # Ainda longe: só confere de novo perto da hora (acordando a cada segundo para
+                # o botão Cancelar responder na hora).
+                tarefa["etapa"] = "Aguardando a live começar"
+                time.sleep(1)
+                continue
+            try:
+                meta = fontes.info(tarefa["alvo"])
+            except Exception as e:  # noqa: BLE001 — rede caiu: tenta de novo no próximo minuto
+                log.warning("Live agendada %s: falha ao conferir (%s)", tarefa["alvo"], _resumo(e))
+                meta = None
+            if meta and meta.get("ao_vivo"):
+                meta["teste"] = tarefa["teste"]
+                log.info("A live %s começou: acompanhando.", meta["id"])
+                self._iniciar_live(tarefa["alvo"], meta, None)
+                with self._trava:
+                    self.tarefas.pop(tarefa["id"], None)
+                return
+            if meta and meta.get("agendada") is None:  # não é mais live (virou vídeo): analisa
+                meta["teste"] = tarefa["teste"]
+                tarefa.update(status="fila", etapa="Na fila")
+                self._fila.submit(self._analisar, tarefa, meta)
+                return
+            if meta and meta.get("agendada"):
+                tarefa["inicio_live"] = meta["agendada"]  # o canal pode ter mudado o horário
+                limite = max(limite, meta["agendada"] + desistir_apos_h * 3600)
+            if time.time() > limite:
+                tarefa.update(status="erro", erro="A live não começou até 6 h depois do horário marcado.",
+                              fim=time.time())
+                return
+            tarefa["etapa"] = "Conferindo se a live já começou"
+            for _ in range(int(verificar_a_cada)):
+                if tarefa.get("cancelar"):
+                    break
+                time.sleep(1)
+
+    @staticmethod
+    def _ponto_de_parada(tarefa: dict) -> None:
+        """Chamado entre as etapas da análise: segura enquanto estiver pausada e interrompe se
+        for cancelada. O passo em curso (um download, um corte sendo renderizado) termina antes."""
+        if tarefa.get("pausar") and not tarefa.get("cancelar"):
+            tarefa["status"] = "pausado"
+            while tarefa.get("pausar") and not tarefa.get("cancelar"):
+                time.sleep(0.5)
+            tarefa["status"] = "rodando"
+        if tarefa.get("cancelar"):
+            raise vod.Cancelado()
+
     def _analisar(self, tarefa: dict, meta: dict) -> None:
         def progresso(etapa: str, fracao: float | None = None) -> None:
-            tarefa.update(etapa=etapa, fracao=fracao)
+            tarefa.update(etapa=etapa, fracao=fracao, mudou=time.time(), vigiado=False)
+            self._ponto_de_parada(tarefa)
 
-        tarefa.update(status="rodando", inicio=time.time())
+        # A thread e a hora da última etapa deixam o vigia (em _laco) apontar no log onde uma
+        # análise parada há muito tempo está presa.
+        tarefa.update(status="rodando", inicio=time.time(), mudou=time.time(), vigiado=False,
+                      thread=threading.get_ident())
         try:
-            self.banco.remover_testes(meta["id"])  # um novo teste substitui o anterior
+            self._ponto_de_parada(tarefa)  # cancelada ainda na fila: nem começa
+            # Os cortes já feitos deste vídeo ficam (antes um novo teste apagava os anteriores,
+            # e reabrir o programa, que retoma as análises, fazia perder cortes). A análise
+            # pula os trechos que já viraram corte, então nada se repete.
             ids = vod.processar(tarefa["alvo"], self.cfg, self.banco, forcar=True, meta=meta,
                                 progresso=progresso)
             tarefa.update(status="feito", etapa="Concluído", fracao=1.0, cortes=len(ids),
                           fim=time.time())
         except Exception as e:  # noqa: BLE001
+            # O yt-dlp embrulha o cancelamento feito durante o download num erro próprio:
+            # qualquer falha depois do clique em Cancelar conta como cancelamento.
+            if isinstance(e, vod.Cancelado) or tarefa.get("cancelar"):
+                # Os cortes já renderizados continuam na aba Cortes; o vídeo fica "parcial",
+                # então pode ser enviado de novo (e os trechos já cortados não se repetem).
+                prontos = len([c for c in self.banco.cortes_do_video(meta["id"])
+                               if c["criado"] >= tarefa["inicio"]])
+                self.banco.marcar_video(meta["id"], meta["titulo"], meta["canal"], "parcial")
+                tarefa.update(status="cancelado", etapa="Cancelada", cortes=prontos,
+                              fim=time.time())
+                log.info("Análise de %s cancelada com %d corte(s) pronto(s).", meta["id"], prontos)
+                return
             log.exception("Falha ao analisar %s", tarefa["alvo"])
             self.banco.marcar_video(meta["id"], meta["titulo"], meta["canal"], "erro")
             tarefa.update(status="erro", erro=_resumo(e), fim=time.time())
+        except BaseException as e:  # noqa: BLE001
+            # O ThreadPoolExecutor engole o que não é Exception sem registrar nada, e a tarefa
+            # ficaria "Analisando" para sempre: registra e marca como erro.
+            log.exception("Análise de %s interrompida", tarefa["alvo"])
+            tarefa.update(status="erro", erro=f"Análise interrompida ({type(e).__name__}).",
+                          fim=time.time())
+            raise
 
     # --- lives ---
     def _iniciar_live(self, alvo: str, meta: dict, entrada: list[str] | None) -> None:
@@ -175,10 +301,132 @@ class Gerenciador:
             if self.lives[live_id].estado["status"] in {"encerrada", "erro"}:
                 del self.lives[live_id]
 
+    def tentar_de_novo(self, tarefa_id: str | None = None, permitir_arquivo: bool = True) -> int:
+        """Reenvia a análise que deu erro (ou, sem id, todas as que deram erro) com o mesmo
+        link e as mesmas opções (modo teste, como live, origem). O cartão do erro some e
+        entra um novo. Devolve quantas foram reenviadas."""
+        with self._trava:
+            if tarefa_id is not None:
+                t = self.tarefas.get(tarefa_id)
+                if not t or t["status"] != "erro":
+                    raise ValueError("Esta análise não está mais com erro.")
+                falhas = [t]
+            else:
+                falhas = sorted((t for t in self.tarefas.values() if t["status"] == "erro"),
+                                key=lambda t: t["inicio"])
+            for t in falhas:
+                del self.tarefas[t["id"]]
+        for t in falhas:
+            self.enviar(t["alvo"], t["teste"], t.get("como_live", False), t.get("origem", "manual"),
+                        permitir_arquivo=permitir_arquivo)
+        return len(falhas)
+
     def fechar_tarefa(self, tarefa_id: str) -> None:
         with self._trava:
-            if self.tarefas[tarefa_id]["status"] in {"feito", "erro"}:
+            if self.tarefas[tarefa_id]["status"] in {"feito", "erro", "cancelado"}:
                 del self.tarefas[tarefa_id]
+
+    def refazer_corte(self, corte_id: int, ajuste_inicio, ajuste_fim) -> None:
+        """Começa a refazer um corte em segundo plano (o painel acompanha em `refazendo`)."""
+        try:
+            ai = float(str(ajuste_inicio or 0).replace(",", "."))
+            af = float(str(ajuste_fim or 0).replace(",", "."))
+        except ValueError:
+            raise ValueError("Use números de segundos, como -5 ou 10.") from None
+        if not ai and not af:
+            raise ValueError("Mude o início ou o fim antes de refazer.")
+        if abs(ai) > 120 or abs(af) > 120:
+            raise ValueError("Ajuste de no máximo 120 segundos por vez.")
+        with self._trava:
+            atual = self.refazendo.get(corte_id)
+            if atual and atual["status"] == "rodando":
+                raise ValueError("Este corte já está sendo refeito.")
+            estado = {"status": "rodando", "etapa": "Começando", "erro": ""}
+            self.refazendo[corte_id] = estado
+
+        def rodar() -> None:
+            try:
+                vod.refazer(corte_id, ai, af, self.cfg, self.banco,
+                            progresso=lambda etapa: estado.update(etapa=etapa))
+                estado.update(status="feito", etapa="Pronto")
+            except Exception as e:  # noqa: BLE001
+                log.exception("Falha ao refazer o corte %s", corte_id)
+                estado.update(status="erro", erro=_resumo(e))
+
+        threading.Thread(target=rodar, daemon=True, name=f"refazer-{corte_id}").start()
+
+    def cortar_trecho(self, video_id: str, posicao: int) -> None:
+        """Gera, em segundo plano, o corte de um trecho da análise que ficou de fora."""
+        if posicao < 0:
+            raise ValueError("Trecho inválido.")
+        chave = f"{video_id}:{posicao}"
+        with self._trava:
+            atual = self.trechos.get(chave)
+            if atual and atual["status"] == "rodando":
+                raise ValueError("Este trecho já está sendo cortado.")
+            estado = {"status": "rodando", "etapa": "Começando", "erro": "", "corte": None}
+            self.trechos[chave] = estado
+
+        def rodar() -> None:
+            try:
+                corte = vod.cortar_candidato(video_id, posicao, self.cfg, self.banco,
+                                             progresso=lambda etapa: estado.update(etapa=etapa))
+                estado.update(status="feito", etapa="Pronto", corte=corte)
+            except Exception as e:  # noqa: BLE001
+                log.exception("Falha ao cortar o trecho %s", chave)
+                estado.update(status="erro", erro=_resumo(e))
+
+        threading.Thread(target=rodar, daemon=True, name=f"trecho-{chave}").start()
+
+    def decidir_corte(self, corte_id: int, modo: str, plataformas=PLATAFORMAS) -> str:
+        """Sua decisão sobre um corte, nas plataformas escolhidas: "agora" publica já;
+        "fila" coloca na fila de postagem (respeitando intervalo, horários e limite diário)."""
+        if modo not in {"agora", "fila"}:
+            raise ValueError("Escolha publicar agora ou colocar na fila.")
+        corte = self.banco.corte(corte_id)
+        if not corte:
+            raise ValueError("Corte não encontrado.")
+        if not Path(corte["arquivo"]).exists():
+            raise ValueError("O arquivo deste corte não existe mais.")
+        destinos = [p for p in plataformas
+                    if not corte[f"{p}_id"] and self.cfg["publicar"][publicar.NOMES[p]]["ativo"]
+                    and not (p in SO_CURTOS and corte["origem"] == "compilacao")]
+        if not destinos:
+            raise ValueError("Este corte já foi publicado nas plataformas escolhidas (ou elas "
+                             "estão desligadas nas Configurações).")
+        nomes = _juntar([publicar.ROTULOS[p] for p in destinos])
+        if modo == "fila":
+            self.banco.aprovar(corte_id, destinos)
+            return f"Corte colocado na fila do {nomes}."
+        conectados = [p for p in destinos if publicar.conectado(p, self.cfg)]
+        if not conectados:
+            raise ValueError("Nenhuma conta conectada para publicar agora (veja Configurações).")
+        self.banco.aprovar(corte_id, conectados)
+        for p in conectados:
+            if publicar.enviando(corte_id, p):
+                continue
+            self.banco.tentar_de_novo(corte_id, p)
+            threading.Thread(target=publicar.publicar_um, daemon=True,
+                             args=(self.cfg, self.banco, self.banco.corte(corte_id), p)).start()
+        nomes = _juntar([publicar.ROTULOS[p] for p in conectados])
+        return f"Publicando agora no {nomes}. Acompanhe o andamento na aba Publicações."
+
+    def controlar_tarefa(self, tarefa_id: str, comando: str) -> None:
+        tarefa = self.tarefas.get(tarefa_id)
+        if not tarefa or tarefa["status"] not in {"identificando", "fila", "rodando", "pausado", "agendada"}:
+            raise ValueError("Esta análise já terminou.")
+        if tarefa["status"] == "agendada" and comando != "cancelar":
+            raise ValueError("Uma live agendada só pode ser cancelada.")
+        if comando == "pausar":
+            tarefa["pausar"] = True
+            if tarefa["status"] == "rodando":
+                tarefa["etapa"] = f"Pausando ao fim da etapa atual ({tarefa['etapa']})"
+        elif comando == "retomar":
+            tarefa["pausar"] = False
+        elif comando == "cancelar":
+            tarefa["cancelar"] = True
+            if tarefa["status"] in {"rodando", "pausado"}:
+                tarefa["etapa"] = "Cancelando ao fim da etapa atual…"
 
     # --- segundo plano: publicação e canais seguidos ---
     def _laco(self) -> None:
@@ -186,6 +434,7 @@ class Gerenciador:
             time.sleep(30)
             try:
                 self._guardar()
+                self._vigiar()
                 publicar.publicar_pendentes(self.cfg, self.banco)
                 if time.time() - self._ultima_medida >= 3600:
                     self._ultima_medida = time.time()
@@ -200,6 +449,32 @@ class Gerenciador:
                     self._buscar_nos_canais()
             except Exception:  # noqa: BLE001
                 log.exception("Erro no ciclo de segundo plano")
+
+    def _vigiar(self, parada_s: float = 600) -> None:
+        """Análise sem mudar de etapa há mais de 10 min: grava no log onde ela está presa
+        (uma vez por etapa), para o problema poder ser achado sem adivinhação."""
+        import sys
+        import traceback
+
+        quadros = sys._current_frames()
+        with self._trava:
+            presas = [t for t in self.tarefas.values() if t["status"] == "rodando"
+                      and not t.get("vigiado") and time.time() - t.get("mudou", time.time()) > parada_s]
+        for t in presas:
+            t["vigiado"] = True
+            quadro = quadros.get(t.get("thread"))
+            # A thread já pegou outra análise da fila: esta terminou sem avisar.
+            reaproveitada = any(o is not t and o.get("thread") == t.get("thread")
+                                and o.get("inicio", 0) > t.get("inicio", 0)
+                                and o["status"] in {"rodando", "pausado"} for o in self.tarefas.values())
+            if quadro is None or reaproveitada:  # a análise morreu sem avisar
+                log.error("Análise de %s sumiu na etapa '%s'.", t["alvo"], t.get("etapa"))
+                t.update(status="erro", erro="A análise parou sem avisar. Envie o link de novo.",
+                         fim=time.time())
+                continue
+            log.warning("Análise de %s parada há %d min em '%s'. Onde está:\n%s", t["alvo"],
+                        (time.time() - t["mudou"]) // 60, t.get("etapa"),
+                        "".join(traceback.format_stack(quadro)[-12:]))
 
     def _buscar_nos_canais(self) -> None:
         seguidos = [c["id"] for c in self.banco.canais() if c["seguir"]]
@@ -222,6 +497,21 @@ class Gerenciador:
                     continue
                 self.enviar(a["url"], teste=False, origem="canal seguido")
 
+    def _analises_anteriores(self, em_tela: set) -> list[dict]:
+        """Vídeos já analisados (inclusive os que não renderam corte), para reabrir a análise
+        e cortar à mão um trecho que ficou de fora."""
+        pasta = Path(self.cfg["pasta_trabalho"])
+        itens = []
+        for v in self.banco._linhas("SELECT * FROM videos ORDER BY criado DESC LIMIT 60"):
+            if v["id"] in em_tela or not (pasta / v["id"] / "analise.json").exists():
+                continue
+            itens.append({"id": f"h:{v['id']}", "anterior": True, "video_id": v["id"],
+                          "titulo": v["titulo"] or v["id"], "canal": v["canal"] or "",
+                          "status": v["status"], "criado": v["criado"]})
+            if len(itens) >= 30:
+                break
+        return itens
+
     # --- retrato para a página ---
     def estado(self) -> dict:
         with self._trava:
@@ -237,6 +527,7 @@ class Gerenciador:
 
         grupos: dict[str, dict] = {}
         fila = []
+        previsto = publicar.previsao(self.cfg, self.banco)
         for c in self.banco.todos_cortes():
             item = {
                 "id": c["id"], "titulo": c["titulo"], "descricao": c["descricao"],
@@ -247,22 +538,37 @@ class Gerenciador:
                 "notas": json.loads(c["notas"] or "{}"), "layout": c["layout"] or "",
                 "narracao": c["narracao"] or "",
                 "capa": bool(c["capa"] and Path(c["capa"]).exists()),
+                "versao": Path(c["arquivo"]).name,  # muda ao refazer: o navegador recarrega o vídeo
+                "ajustavel": vod.pode_refazer(c),
+                "refazendo": self.refazendo.get(c["id"]),
+                # plataformas em que o corte espera você decidir (fora da fila)
+                "aguardando": [] if c["teste"] else [p for p in PLATAFORMAS
+                                                     if c[f"{p}_aguardando"] and not c[f"{p}_id"]],
             }
-            for p in ("yt", "ig"):
+            for p in PLATAFORMAS:
                 if c[f"{p}_id"]:
                     situacao = "publicado"
                 elif c["teste"]:
                     situacao = "teste"
-                elif p == "ig" and c["origem"] == "compilacao":
+                elif p in SO_CURTOS and c["origem"] == "compilacao":
                     situacao = "não se aplica"
+                elif c[f"{p}_aguardando"]:
+                    situacao = "aguardando"  # fora da fila até você decidir
                 elif c[f"{p}_tentativas"] >= MAX_TENTATIVAS:
                     situacao = "falhou"
                 else:
                     situacao = "na fila"
+                envio = publicar.ENVIANDO.get((c["id"], p))
+                if envio and situacao != "publicado":
+                    situacao = "enviando"
                 item[p] = {"situacao": situacao, "link": c[f"{p}_link"] or "",
                            "erro": c[f"{p}_erro"] or "", "quando": c[f"{p}_em"],
                            "tentativas": c[f"{p}_tentativas"], "vistas": c[f"{p}_vistas"],
-                           "curtidas": c[f"{p}_curtidas"]}
+                           "curtidas": c[f"{p}_curtidas"],
+                           # andamento do envio e previsão de quando sai (fila automática)
+                           "envio": dict(envio) if envio else None,
+                           "previsto": previsto[p]["cortes"].get(c["id"])
+                           if situacao == "na fila" else None}
             grupo = grupos.setdefault(c["video_id"], {
                 "video_id": c["video_id"], "titulo": c["video_titulo"] or c["video_id"],
                 "canal": c["canal"] or "", "origem": c["origem"], "cortes": []})
@@ -276,10 +582,12 @@ class Gerenciador:
             contas[p] = {
                 "ativo": cfg_p["ativo"], "conectado": publicar.conectado(p, self.cfg),
                 "hoje": self.banco.publicados_desde(p, time.time() - 86400),
-                "max": cfg_p["max_por_dia"],
+                "max": cfg_p["max_por_dia"], "bloqueio": previsto[p]["bloqueio"],
             }
         return {
             "lives": lives, "tarefas": tarefas, "grupos": list(grupos.values()), "fila": fila,
+            "trechos": {k: dict(v) for k, v in self.trechos.items()},
+            "anteriores": self._analises_anteriores({t["video_id"] for t in tarefas}),
             "contas": contas, "canais": [dict(c) for c in self.banco.canais()],
             "publicacao_auto": self.banco.opcao("publicacao_auto", "1") == "1",
             "ia": ia.disponivel(self.cfg), "whisper": transcricao.whisper_disponivel(),
@@ -326,7 +634,12 @@ class Gerenciador:
             "youtube": {"tem_segredo": Path(cfg_yt["client_secret"]).exists(),
                         "conectado": publicar.conectado("yt", self.cfg)},
             "instagram": publicar.conectado("ig", self.cfg),
-            "ia": ia.disponivel(self.cfg), "rostos": enquadramento.disponivel(),
+            "tiktok": {"tem_chaves": all(tiktok.chaves()),
+                       "conectado": publicar.conectado("tt", self.cfg),
+                       "retorno": self._retorno_tiktok()},
+            "ia": ia.disponivel(self.cfg), "provedor": ia.provedor(self.cfg),
+            "reserva": bool(ia.achar_claude_code()),
+            "rostos": enquadramento.disponivel(),
             "whisper": transcricao.whisper_disponivel(),
             "voz": {"instalada": narracao.instalado(),
                     "arquivo": Path(self.cfg["narracao"]["voz"]).exists(),
@@ -371,14 +684,43 @@ class Gerenciador:
             self._fluxo_youtube.credentials.to_json())
         self._fluxo_youtube = None
 
+    def _retorno_tiktok(self) -> str:
+        return f"http://localhost:{self.porta}/oauth/tiktok/"
+
+    def tiktok_iniciar(self) -> str:
+        url, self._estado_tiktok, self._verificador_tiktok = tiktok.iniciar_login(
+            self._retorno_tiktok())
+        return url
+
+    def tiktok_concluir(self, codigo: str, estado: str = "") -> None:
+        if not self._verificador_tiktok:
+            raise ValueError("A autorização expirou. Clique em Conectar o TikTok de novo.")
+        # Mesmo cuidado do YouTube: só aceita o retorno da autorização iniciada aqui.
+        if not estado or not seguranca.senha_confere(estado, self._estado_tiktok or ""):
+            self._verificador_tiktok = None
+            raise ValueError("Retorno de autorização inválido. Clique em Conectar o TikTok de novo.")
+        verificador, self._verificador_tiktok = self._verificador_tiktok, None
+        tiktok.concluir_login(self.cfg["publicar"]["tiktok"], codigo, self._retorno_tiktok(),
+                              verificador)
+
     # --- ações da página ---
     def acao(self, nome: str, d: dict, local: bool = True) -> dict:
         if not isinstance(d, dict):
             raise ValueError("Pedido inválido.")
         if nome == "ajustes/salvar":
             ajustes.salvar(self.cfg, d.get("valores") or {}, self.caminho_cfg)
+            fontes.configurar(self.cfg)  # cookies valem na hora
         elif nome == "chave":
             ajustes.definir_chave(d.get("nome", ""), d.get("valor", ""))
+            # Quem cola só a chave de um provedor quer usar esse provedor: troca sozinho.
+            outro = {"NVIDIA_API_KEY": ("nvidia", "ANTHROPIC_API_KEY"),
+                     "ANTHROPIC_API_KEY": ("anthropic", "NVIDIA_API_KEY")}.get(d.get("nome"))
+            if outro and ia.provedor(self.cfg) != outro[0] and not os.environ.get(outro[1]):
+                ajustes.salvar(self.cfg, {"ia.provedor": outro[0]}, self.caminho_cfg)
+        elif nome == "ia/testar":
+            return {"ok": True, "mensagem": ia.testar(self.cfg)}
+        elif nome == "ia/testar_reserva":
+            return {"ok": True, "mensagem": ia.testar_reserva(self.cfg)}
         elif nome == "youtube/segredo":
             try:
                 dados = json.loads(d.get("conteudo") or "")
@@ -391,6 +733,8 @@ class Gerenciador:
             destino.chmod(0o600)
         elif nome == "youtube/conectar":
             return {"ok": True, "url": self.youtube_iniciar()}
+        elif nome == "tiktok/conectar":
+            return {"ok": True, "url": self.tiktok_iniciar()}
         elif nome == "voz/instalar":
             if narracao.instalacao["estado"] != "rodando":
                 narracao.instalacao.update(estado="rodando", mensagem="Começando…")
@@ -406,10 +750,36 @@ class Gerenciador:
             self.parar_live(d["id"])
         elif nome == "live/fechar":
             self.fechar_live(d["id"])
+        elif nome == "tarefa/tentar_de_novo":
+            self.tentar_de_novo(d["id"], permitir_arquivo=local)
+        elif nome == "tarefa/tentar_todas":
+            n = self.tentar_de_novo(None, permitir_arquivo=local)
+            if not n:
+                raise ValueError("Nenhuma análise com erro para tentar de novo.")
+            return {"ok": True, "mensagem": f"{n} {'análise enviada' if n == 1 else 'análises enviadas'} de novo."}
         elif nome == "tarefa/fechar":
             self.fechar_tarefa(d["id"])
+        elif nome in {"tarefa/pausar", "tarefa/retomar", "tarefa/cancelar"}:
+            self.controlar_tarefa(d["id"], nome.split("/")[1])
+        elif nome == "corte/refazer":
+            self.refazer_corte(int(d["id"]), d.get("inicio", 0), d.get("fim", 0))
+        elif nome == "trecho/cortar":
+            self.cortar_trecho(str(d.get("video", "")), int(d.get("pos", -1)))
         elif nome == "corte/aprovar":
             self.banco.aprovar(int(d["id"]))
+        elif nome == "corte/decidir":
+            return {"ok": True, "mensagem": self.decidir_corte(
+                int(d["id"]), str(d.get("modo", "")), _plataformas(d.get("plataformas")))}
+        elif nome == "corte/tirar_da_fila":
+            corte_id, plats = int(d["id"]), _plataformas(d.get("plataformas"))
+            if any(publicar.enviando(corte_id, p) for p in plats):
+                raise ValueError("Este corte está sendo enviado agora; espere terminar.")
+            if not self.banco.tirar_da_fila(corte_id, plats):
+                raise ValueError("Este corte não está na fila.")
+        elif nome == "fila/esvaziar":
+            n = self.banco.tirar_da_fila()
+            return {"ok": True, "mensagem": f"{n} {'corte voltou' if n == 1 else 'cortes voltaram'} "
+                                            "para “Aguardando você”. Nada foi apagado."}
         elif nome == "corte/remover":
             if not self.banco.remover_corte(int(d["id"])):
                 raise ValueError("Cortes já publicados não podem ser removidos por aqui.")
@@ -424,6 +794,8 @@ class Gerenciador:
                 raise ValueError(f"A conta do {publicar.NOMES[plataforma]} ainda não está conectada.")
             if corte["teste"]:
                 raise ValueError("Aprove o corte de teste antes de publicar.")
+            if publicar.enviando(corte["id"], plataforma):
+                raise ValueError("Este corte já está sendo enviado. Acompanhe o andamento na fila.")
             self.banco.tentar_de_novo(corte["id"], plataforma)
             threading.Thread(target=publicar.publicar_um, daemon=True,
                              args=(self.cfg, self.banco, corte, plataforma)).start()
@@ -444,6 +816,19 @@ class Gerenciador:
         else:
             raise KeyError(nome)
         return {"ok": True}
+
+
+def _plataformas(valor) -> tuple[str, ...]:
+    """"yt", "ig", "tt", "yt,ig"... (ou lista) vindos da página; vazio = todas."""
+    itens = valor if isinstance(valor, list) else str(valor or ",".join(PLATAFORMAS)).split(",")
+    plats = tuple(p for p in PLATAFORMAS if p in {str(i).strip() for i in itens})
+    if not plats:
+        raise ValueError("Escolha pelo menos uma plataforma.")
+    return plats
+
+
+def _juntar(nomes: list[str]) -> str:
+    return nomes[0] if len(nomes) == 1 else ", ".join(nomes[:-1]) + " e " + nomes[-1]
 
 
 def _resumo(e: Exception) -> str:
@@ -532,6 +917,8 @@ def _manipulador(ger: Gerenciador):
             else:
                 self.send_response(200)
             self.send_header("Content-Type", tipo)
+            if tipo.startswith("text/html"):  # a página muda com o programa: nunca usar cópia velha
+                self.send_header("Cache-Control", "no-cache")
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Content-Length", str(fim - ini + 1))
             self.end_headers()
@@ -560,13 +947,18 @@ def _manipulador(ger: Gerenciador):
                 return self._json(ger.monetizacao())
             if rota == "/api/ajustes":
                 return self._json(ger.ajustes())
-            if rota == "/oauth/youtube":
+            if rota in ("/oauth/youtube", "/oauth/tiktok/", "/oauth/tiktok"):
                 consulta = parse_qs(urlsplit(self.path).query)
                 try:
                     if "code" not in consulta:
-                        raise ValueError(consulta.get("error", ["Autorização cancelada."])[0])
-                    ger.youtube_concluir(consulta["code"][0], consulta.get("state", [""])[0])
-                    texto = "Canal do YouTube conectado. Pode fechar esta aba e voltar ao painel."
+                        raise ValueError((consulta.get("error_description") or consulta.get(
+                            "error") or ["Autorização cancelada."])[0])
+                    if rota == "/oauth/youtube":
+                        ger.youtube_concluir(consulta["code"][0], consulta.get("state", [""])[0])
+                        texto = "Canal do YouTube conectado. Pode fechar esta aba e voltar ao painel."
+                    else:
+                        ger.tiktok_concluir(consulta["code"][0], consulta.get("state", [""])[0])
+                        texto = "TikTok conectado. Pode fechar esta aba e voltar ao painel."
                 except Exception as e:  # noqa: BLE001
                     texto = f"Não foi possível conectar: {_resumo(e)}"
                 corpo = (f"<!doctype html><meta charset=utf-8><title>Cortes Virais</title>"
@@ -627,6 +1019,14 @@ def criar(cfg: dict, banco: Banco, host: str = "127.0.0.1", porta: int = 8000,
     """Cria o servidor do painel (sem iniciá-lo). Devolve (servidor, gerenciador)."""
     class Servidor(ThreadingHTTPServer):
         daemon_threads = True
+        # No Windows, "reusar endereço" deixa um 2º programa ouvir na MESMA porta: os pedidos
+        # se dividem entre os dois e o painel trava. Aqui a porta é exclusiva.
+        allow_reuse_address = sys.platform != "win32"
+
+        def server_bind(self) -> None:
+            if sys.platform == "win32":
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            super().server_bind()
 
         def handle_error(self, request, client_address) -> None:
             import sys

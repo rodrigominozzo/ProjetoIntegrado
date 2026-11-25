@@ -28,16 +28,27 @@ CREATE TABLE IF NOT EXISTS opcoes (chave TEXT PRIMARY KEY, valor TEXT);
 MIGRACOES = ["teste INTEGER DEFAULT 0", "yt_link TEXT", "ig_link TEXT", "gancho TEXT",
              "notas TEXT", "layout TEXT", "yt_vistas INTEGER", "yt_curtidas INTEGER",
              "ig_vistas INTEGER", "ig_curtidas INTEGER", "narracao TEXT", "capa TEXT",
-             "capa_ms INTEGER"]
+             "capa_ms INTEGER",
+             # 1 = aguardando você decidir (publicar agora ou pôr na fila): fora da fila.
+             # "aguardando" foi a 1ª versão (valia para as duas); agora é por plataforma.
+             "aguardando INTEGER DEFAULT 0", "yt_aguardando INTEGER DEFAULT 0",
+             "ig_aguardando INTEGER DEFAULT 0",
+             # TikTok (envio para a caixa de entrada do app), mesma lógica das outras.
+             "tt_id TEXT", "tt_em REAL", "tt_tentativas INTEGER DEFAULT 0", "tt_erro TEXT",
+             "tt_link TEXT", "tt_aguardando INTEGER DEFAULT 0", "tt_vistas INTEGER",
+             "tt_curtidas INTEGER"]
 # Campanha paga por visualização e comprovante de autorização, por canal.
 MIGRACOES_CANAIS = ["valor_mil REAL DEFAULT 0", "texto_obrigatorio TEXT DEFAULT ''",
                     "autorizacao TEXT DEFAULT ''"]
 MAX_TENTATIVAS = 3
+PLATAFORMAS = ("yt", "ig", "tt")
+# Compilações são vídeos longos horizontais: só vão para o YouTube.
+SO_CURTOS = ("ig", "tt")
 
 
 def _plataforma(p: str) -> None:
     """O nome da plataforma entra em nomes de coluna: só os dois valores conhecidos passam."""
-    if p not in ("yt", "ig"):
+    if p not in PLATAFORMAS:
         raise ValueError("Plataforma inválida.")
 
 
@@ -54,6 +65,16 @@ class Banco:
                         self._con.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna}")
                     except sqlite3.OperationalError:
                         pass  # já existe
+            # Passa o "aguardando" da 1ª versão para as duas plataformas (uma vez só).
+            self._con.execute("UPDATE cortes SET yt_aguardando=1, ig_aguardando=1, aguardando=0"
+                              " WHERE aguardando=1")
+            # Falhas de processamento do Instagram contavam como tentativa e tiravam o corte da
+            # fila; agora são passageiras: devolve esses cortes à fila.
+            self._con.execute("UPDATE cortes SET ig_tentativas=0 WHERE ig_id IS NULL AND ig_tentativas>0"
+                              " AND (ig_erro LIKE '%ProcessingFailedError%'"
+                              " OR ig_erro LIKE '%conseguiu processar o v_deo%')"
+                              " AND ig_erro NOT LIKE '%Desisti%'")
+            self._con.commit()
 
     def _exec(self, sql: str, args=()):
         with self._trava:
@@ -79,25 +100,28 @@ class Banco:
     # --- cortes ---
     def novo_corte(self, *, video_id, origem, inicio, fim, nota, titulo, descricao,
                    hashtags, arquivo, urgente=False, teste=False, gancho="", notas=None,
-                   layout="", narracao="", capa="", capa_ms=None) -> int:
+                   layout="", narracao="", capa="", capa_ms=None, aguardando=False) -> int:
         cur = self._exec(
             "INSERT INTO cortes (video_id, origem, inicio, fim, nota, titulo, descricao, hashtags,"
-            " arquivo, urgente, teste, gancho, notas, layout, narracao, capa, capa_ms, criado)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " arquivo, urgente, teste, gancho, notas, layout, narracao, capa, capa_ms, criado,"
+            " yt_aguardando, ig_aguardando, tt_aguardando)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (video_id, origem, inicio, fim, nota, titulo, descricao, json.dumps(hashtags),
              str(arquivo), int(urgente), int(teste), gancho, json.dumps(notas or {}), layout,
-             narracao, str(capa or ""), capa_ms, time.time()),
+             narracao, str(capa or ""), capa_ms, time.time(), int(aguardando), int(aguardando),
+             int(aguardando)),
         )
         return cur.lastrowid
 
     def pendentes(self, plataforma: str) -> list[sqlite3.Row]:
-        """Cortes ainda não publicados em 'yt' ou 'ig': urgentes e melhores notas primeiro."""
+        """Cortes ainda não publicados na plataforma: urgentes e melhores notas primeiro."""
         _plataforma(plataforma)
         return self._linhas(
-            f"SELECT * FROM cortes WHERE teste=0 AND {plataforma}_id IS NULL"
+            f"SELECT * FROM cortes WHERE teste=0 AND COALESCE({plataforma}_aguardando, 0)=0"
+            f" AND {plataforma}_id IS NULL"
             f" AND {plataforma}_tentativas < ?"
             # compilações são vídeos longos horizontais: só no YouTube
-            + (" AND origem != 'compilacao'" if plataforma == "ig" else "") +
+            + (" AND origem != 'compilacao'" if plataforma in SO_CURTOS else "") +
             " ORDER BY urgente DESC, nota DESC, id",
             (MAX_TENTATIVAS,),
         )
@@ -114,14 +138,49 @@ class Banco:
         linhas = self._linhas("SELECT * FROM cortes WHERE id=?", (corte_id,))
         return linhas[0] if linhas else None
 
+    def atualizar_corte(self, corte_id: int, **campos) -> None:
+        """Troca o trecho e os arquivos de um corte refeito (só colunas conhecidas)."""
+        permitidas = {"inicio", "fim", "arquivo", "descricao", "capa", "capa_ms", "layout", "narracao"}
+        campos = {k: v for k, v in campos.items() if k in permitidas}
+        if campos:
+            self._exec(f"UPDATE cortes SET {', '.join(f'{k}=?' for k in campos)} WHERE id=?",
+                       (*campos.values(), corte_id))
+
+    def cortes_do_video(self, video_id: str) -> list[sqlite3.Row]:
+        return self._linhas("SELECT * FROM cortes WHERE video_id=? ORDER BY inicio", (video_id,))
+
     def todos_cortes(self) -> list[sqlite3.Row]:
         return self._linhas(
             "SELECT c.*, v.titulo AS video_titulo, v.canal AS canal FROM cortes c"
             " LEFT JOIN videos v ON v.id = c.video_id ORDER BY c.criado DESC")
 
-    def aprovar(self, corte_id: int) -> None:
-        """Tira o corte do modo teste: ele entra na fila de publicação."""
-        self._exec("UPDATE cortes SET teste=0 WHERE id=?", (corte_id,))
+    def aprovar(self, corte_id: int, plataformas=PLATAFORMAS) -> None:
+        """Tira o corte do modo teste e o põe na fila das plataformas pedidas; as outras
+        continuam aguardando você."""
+        for p in plataformas:
+            _plataforma(p)
+        atual = self.corte(corte_id)
+        if not atual:
+            return
+        sets = ["teste=0", *(f"{p}_aguardando=0" for p in plataformas)]
+        if atual["teste"]:  # saindo do modo teste: a plataforma não escolhida fica aguardando
+            sets += [f"{p}_aguardando=1" for p in PLATAFORMAS if p not in plataformas]
+        self._exec(f"UPDATE cortes SET {', '.join(sets)} WHERE id=?", (corte_id,))
+
+    def tirar_da_fila(self, corte_id: int | None = None, plataformas=PLATAFORMAS) -> int:
+        """Volta o corte (ou, sem id, toda a fila) para "aguardando você" nas plataformas
+        pedidas. Devolve quantos cortes mudaram."""
+        mudou = set()
+        for p in plataformas:
+            _plataforma(p)
+            filtro = f"teste=0 AND COALESCE({p}_aguardando, 0)=0 AND {p}_id IS NULL"
+            onde = f"{filtro} AND id=?" if corte_id is not None else filtro
+            args = (corte_id,) if corte_id is not None else ()
+            ids = [r["id"] for r in self._linhas(f"SELECT id FROM cortes WHERE {onde}", args)]
+            if ids:
+                self._exec(f"UPDATE cortes SET {p}_aguardando=1 WHERE id IN ({','.join('?' * len(ids))})", ids)
+                mudou.update(ids)
+        return len(mudou)
 
     def tentar_de_novo(self, corte_id: int, plataforma: str) -> None:
         _plataforma(plataforma)
@@ -131,7 +190,7 @@ class Banco:
     def remover_corte(self, corte_id: int) -> bool:
         """Apaga um corte ainda não publicado (registro e arquivo)."""
         c = self.corte(corte_id)
-        if not c or c["yt_id"] or c["ig_id"]:
+        if not c or any(c[f"{p}_id"] for p in PLATAFORMAS):
             return False
         self.apagar_arquivos(c)
         self._exec("DELETE FROM cortes WHERE id=?", (corte_id,))
@@ -140,7 +199,8 @@ class Banco:
     @staticmethod
     def apagar_arquivos(c) -> None:
         base = Path(c["arquivo"])
-        for arq in [base, *base.parent.glob(base.stem + ".*")]:
+        receita = base.parent / f"receita_{c['id']}.json"  # guia para refazer o corte
+        for arq in [base, *base.parent.glob(base.stem + ".*"), receita]:
             arq.unlink(missing_ok=True)
 
     def limpar_antigos(self, dias: int, plataformas: list[str]) -> int:
@@ -151,7 +211,7 @@ class Banco:
         limite = time.time() - dias * 86400
         feitos = 0
         for c in self._linhas("SELECT * FROM cortes WHERE teste=0"):
-            alvos = [p for p in plataformas if not (p == "ig" and c["origem"] == "compilacao")]
+            alvos = [p for p in plataformas if not (p in SO_CURTOS and c["origem"] == "compilacao")]
             if alvos and all(c[f"{p}_em"] and c[f"{p}_em"] < limite for p in alvos) \
                     and Path(c["arquivo"]).exists():
                 self.apagar_arquivos(c)
@@ -236,13 +296,12 @@ class Banco:
         self._exec("INSERT INTO opcoes VALUES (?,?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor",
                    (chave, valor))
 
-    def falhou(self, corte_id: int, plataforma: str, erro: str) -> None:
+    def falhou(self, corte_id: int, plataforma: str, erro: str, contar: bool = True) -> None:
+        """Registra a falha. Com contar=False (falha passageira do lado da plataforma) só
+        guarda a mensagem: o corte continua na fila e não chega ao limite de tentativas."""
         _plataforma(plataforma)
-        self._exec(
-            f"UPDATE cortes SET {plataforma}_tentativas={plataforma}_tentativas+1, {plataforma}_erro=?"
-            " WHERE id=?",
-            (erro[:500], corte_id),
-        )
+        soma = f"{plataforma}_tentativas={plataforma}_tentativas+1, " if contar else ""
+        self._exec(f"UPDATE cortes SET {soma}{plataforma}_erro=? WHERE id=?", (erro[:500], corte_id))
 
     def publicados_desde(self, plataforma: str, desde: float) -> int:
         _plataforma(plataforma)
@@ -251,6 +310,12 @@ class Banco:
         )
         return linhas[0]["n"]
 
+    def publicacoes_desde(self, plataforma: str, desde: float) -> list[float]:
+        """Horários das publicações a partir de `desde` (para prever a fila)."""
+        _plataforma(plataforma)
+        return [r["t"] for r in self._linhas(
+            f"SELECT {plataforma}_em t FROM cortes WHERE {plataforma}_em >= ?", (desde,))]
+
     def ultima_publicacao(self, plataforma: str) -> float:
         _plataforma(plataforma)
         linhas = self._linhas(f"SELECT MAX({plataforma}_em) m FROM cortes")
@@ -258,8 +323,8 @@ class Banco:
 
     def resumo(self) -> dict:
         linha = self._linhas(
-            "SELECT COUNT(*) total, COUNT(yt_id) yt, COUNT(ig_id) ig FROM cortes"
+            "SELECT COUNT(*) total, COUNT(yt_id) yt, COUNT(ig_id) ig, COUNT(tt_id) tt FROM cortes"
         )[0]
         videos = self._linhas("SELECT COUNT(*) n FROM videos")[0]["n"]
         return {"videos": videos, "cortes": linha["total"], "youtube": linha["yt"],
-                "instagram": linha["ig"]}
+                "instagram": linha["ig"], "tiktok": linha["tt"]}

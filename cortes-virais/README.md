@@ -158,6 +158,10 @@ Instalação manual, se preferir: `pip install -r requirements.txt`, copiar
 
 - **Claude:** `ANTHROPIC_API_KEY` no `.env`. Sem ela o sistema funciona, ordenando só
   pelos sinais e com títulos genéricos.
+- **NVIDIA (alternativa gratuita):** chave `NVIDIA_API_KEY` (de build.nvidia.com, conta
+  NVIDIA Developer, sem cartão) e `ia.provedor: nvidia`. Usa modelos abertos, com limite de
+  cerca de 40 pedidos por minuto; a NVIDIA indica o acesso gratuito para testes. Os modelos
+  ficam em `ia.nvidia.modelos`; o botão "Testar IA" da aba Configurações confere chave e modelo.
 - **YouTube:** crie um projeto no Google Cloud, ative a *YouTube Data API v3*, crie uma
   credencial OAuth do tipo "app para computador", salve como `client_secret.json` e rode
   `python -m cortes login-youtube` uma vez, logado na conta do canal de destino.

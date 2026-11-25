@@ -17,9 +17,22 @@ MODELOS = [
     ["claude-opus-5-5", "Opus 5.5 — o melhor julgamento criativo"],
 ]
 
+# Catálogo gratuito do build.nvidia.com (muda com o tempo; dá para pôr outro no config.yaml).
+MODELOS_NVIDIA = [
+    ["google/gemma-4-31b-it", "Gemma 4 31B — vê imagens, bom em português, rápido (recomendado)"],
+    ["nvidia/nemotron-3.5-super-vl-120b-a12b", "Nemotron 3.5 Super VL — vê imagens, mas recusa cenas violentas e às vezes estoura a resposta"],
+    ["mistralai/mistral-large-4-1t-a52b", "Mistral Large 4 — só texto, escreve bem"],
+    ["nvidia/nemotron-3-ultra-550b-a55b", "Nemotron 3 Ultra — só texto, o maior"],
+    ["z-ai/glm-5.3-flash", "GLM 5.3 Flash — só texto, rápido"],
+    ["openai/gpt-oss-20b", "GPT-OSS 20B — só texto, o mais leve"],
+]
+
 # (seção, descrição da seção, [campos])
 SECOES = [
     ("Cortes", "Tamanho, quantidade e aparência dos cortes.", [
+        ("fontes.duracao_max_h", "inteiro", "Vídeo mais longo aceito (horas)",
+         "Vídeos gravados mais longos que isto não são analisados (lives gravadas costumam ter "
+         "de 4 a 10 h). Quanto maior, mais tempo de download e de análise.", {"min": 1, "max": 24}),
         ("cortes.duracao", "inteiro", "Duração alvo (segundos)",
          "O tamanho que o sistema procura. 30 é um bom ponto de partida.", {"min": 10, "max": 90}),
         ("cortes.duracao_min", "inteiro", "Duração mínima",
@@ -27,6 +40,14 @@ SECOES = [
          {"min": 8, "max": 90}),
         ("cortes.duracao_max", "inteiro", "Duração máxima",
          "A IA pode estender o corte até aqui para não cortar o desfecho.", {"min": 10, "max": 180}),
+        ("cortes.fechar_frases", "booleano", "Não cortar ninguém no meio da fala",
+         "A IA lê o que é dito depois do corte e o estende até a explicação, a história ou o "
+         "raciocínio terminar (e, se ele começa no meio de uma frase, volta até o começo "
+         "dela), mesmo passando da duração máxima. Sem IA, vale a próxima pausa da fala.",
+         {}),
+        ("cortes.extensao_max", "inteiro", "Quanto o corte pode crescer para fechar o raciocínio (segundos)",
+         "Limite da extensão acima. Mais alto: explicações longas cabem inteiras, e alguns "
+         "cortes ficam mais longos.", {"min": 0, "max": 90}),
         ("cortes.por_video", "inteiro", "Cortes por vídeo gravado",
          "Quantos cortes, no máximo, sair de cada vídeo. Só entram os que passam da nota mínima.",
          {"min": 1, "max": 20}),
@@ -120,18 +141,50 @@ SECOES = [
     ("Inteligência artificial", "Qual modelo faz cada parte e o quanto ele é exigente.", [
         ("ia.ativa", "booleano", "Usar IA",
          "Desligada, os cortes são escolhidos só por chat e áudio, com títulos genéricos.", {}),
+        ("ia.provedor", "escolha", "Provedor da IA",
+         "Claude escreve melhor e cobra por uso (chave ANTHROPIC_API_KEY). NVIDIA é gratuita, "
+         "com limite de uso e textos um pouco mais simples, e a própria NVIDIA a indica para "
+         "testes (chave NVIDIA_API_KEY). Os modelos de cada provedor são escolhidos abaixo.",
+         {"opcoes": [["anthropic", "Claude (Anthropic) — pago, melhor qualidade"],
+                     ["nvidia", "NVIDIA Build — gratuito, para testes"]]}),
+        ("ia.reserva", "escolha", "IA reserva (se a principal cair)",
+         "Quando a IA principal falha (fora do ar, limite de uso, recusa), o pedido vai para o "
+         "Claude Code instalado neste computador, com a sua conta Claude, como no J.A.R.V.I.S. "
+         "Gasta o limite de uso do seu plano, não créditos da API.",
+         {"opcoes": [["claude_code", "Claude Code (sua conta Claude, neste computador)"],
+                     ["nenhuma", "Nenhuma: o vídeo segue sem IA"]]}),
+        ("ia.reserva_modelo", "escolha", "Modelo da IA reserva",
+         "Sonnet equilibra qualidade e consumo do plano; Haiku gasta menos; Opus julga melhor.",
+         {"opcoes": MODELOS}),
+        ("ia.local", "escolha", "IA local (último recurso, sem internet)",
+         "Se a principal e a reserva falharem, usa a IA local do Ollama, como no J.A.R.V.I.S. "
+         "Ela é mais fraca: a nota vem só das métricas (chat, áudio, replays) e a IA local "
+         "apenas aprova ou reprova cada trecho; a nota mínima não vale nesse caso.",
+         {"opcoes": [["ollama", "Ollama neste computador"], ["nenhuma", "Nenhuma: segue sem IA"]]}),
+        ("ia.local_modelo", "texto", "Modelo da IA local",
+         "Vazio escolhe o melhor instalado (qwen3:30b, gpt-oss:20b, qwen3:14b, gemma3…). "
+         "Ou escreva o nome exato, como gemma3:4b.", {}),
         ("ia.nota_minima", "inteiro", "Nota mínima para virar corte",
          "De 0 a 100. Mais alto: menos cortes, mais selecionados. 60 a 70 costuma funcionar.",
          {"min": 0, "max": 100}),
-        ("ia.modelos.triagem", "escolha", "Triagem dos candidatos",
+        ("ia.modelos.triagem", "escolha", "Claude: triagem dos candidatos",
          "Lê só o texto de muitos trechos e descarta os fracos. Tarefa simples e volumosa: "
          "o modelo mais rápido dá conta.", {"opcoes": MODELOS}),
-        ("ia.modelos.ao_vivo", "escolha", "Avaliação durante a live",
+        ("ia.modelos.ao_vivo", "escolha", "Claude: avaliação durante a live",
          "Decide em segundos se um pico vira corte e escreve gancho e título. Precisa ser "
          "rápido para publicar antes dos outros.", {"opcoes": MODELOS}),
-        ("ia.modelos.final", "escolha", "Julgamento final de vídeos gravados",
+        ("ia.modelos.final", "escolha", "Claude: julgamento final de vídeos gravados",
          "Vê imagens e texto dos finalistas, dá as notas, escreve o gancho e dirige a "
          "edição. É aqui que a qualidade do corte se decide.", {"opcoes": MODELOS}),
+        ("ia.nvidia.modelos.triagem", "escolha", "NVIDIA: triagem dos candidatos",
+         "Só vale com o provedor NVIDIA. Lê só texto; um modelo rápido basta.",
+         {"opcoes": MODELOS_NVIDIA}),
+        ("ia.nvidia.modelos.ao_vivo", "escolha", "NVIDIA: avaliação durante a live",
+         "Só vale com o provedor NVIDIA. Prefira um que veja imagens e responda rápido.",
+         {"opcoes": MODELOS_NVIDIA}),
+        ("ia.nvidia.modelos.final", "escolha", "NVIDIA: julgamento final de vídeos gravados",
+         "Só vale com o provedor NVIDIA. Prefira um que veja imagens: os de “só texto” "
+         "avaliam apenas a transcrição e o chat.", {"opcoes": MODELOS_NVIDIA}),
         ("ia.quadros", "inteiro", "Imagens por candidato",
          "Quantos quadros do vídeo a IA vê de cada trecho. Mais quadros: melhor avaliação "
          "visual e custo maior.", {"min": 1, "max": 8}),
@@ -140,6 +193,17 @@ SECOES = [
         ("live.limiar", "numero", "Sensibilidade (limiar de empolgação)",
          "O corte dispara quando a empolgação passa deste valor. Menor: mais cortes e mais "
          "falsos alarmes. Entre 3,5 e 5 é o usual.", {"min": 2, "max": 10}),
+        ("live.palavras_limiar_menor", "texto", "Lives com sensibilidade maior",
+         "Palavras do título, separadas por vírgula (ex.: GTA, Minecraft). Lives com alguma "
+         "delas usam o limiar abaixo, que corta com menos empolgação.", {}),
+        ("live.limiar_menor", "numero", "Limiar dessas lives",
+         "Vale só para as lives com as palavras acima. Menor que o normal: mais cortes.",
+         {"min": 1, "max": 10}),
+        ("live.historico", "booleano", "Olhar também o que a live já passou",
+         "Ao começar a acompanhar, uma segunda frente baixa o áudio do que já foi transmitido, "
+         "acha os melhores momentos e corta, enquanto a primeira segue em tempo real.", {}),
+        ("live.historico_horas", "numero", "Até quantas horas para trás",
+         "Lives muito longas: limita o quanto do passado é analisado.", {"min": 0.5, "max": 12}),
         ("live.min_mensagens", "inteiro", "Mensagens mínimas em 10 s",
          "Evita disparo em chat quase parado.", {"min": 1, "max": 200}),
         ("live.pre", "inteiro", "Segundos antes do pico", "Quanto do antes entra no corte.",
@@ -152,16 +216,54 @@ SECOES = [
          "Limite para os canais acompanhados automaticamente. Links enviados por você não "
          "contam.", {"min": 1, "max": 10}),
     ]),
+    ("Vídeos com restrição", "Vídeos com restrição de idade só abrem com uma conta logada no "
+     "YouTube. O programa usa os cookies do navegador em que você já está logado, só neste "
+     "computador (nada é enviado a outro lugar).", [
+        ("fontes.cookies_navegador", "escolha", "Navegador logado no YouTube",
+         "O Firefox funciona melhor. Chrome e Edge travam os cookies enquanto estão abertos e, "
+         "nas versões novas, protegem os cookies: se der erro, use o Firefox ou um arquivo.",
+         {"opcoes": [["", "Nenhum (vídeos com restrição vão falhar)"], ["firefox", "Firefox"],
+                     ["chrome", "Chrome"], ["edge", "Edge"], ["brave", "Brave"],
+                     ["opera", "Opera"], ["vivaldi", "Vivaldi"]]}),
+        ("fontes.cookies_arquivo", "texto", "Ou um arquivo cookies.txt",
+         "Caminho de um cookies.txt exportado do YouTube (extensão “Get cookies.txt LOCALLY”). "
+         "Se preenchido, vale no lugar do navegador. Guarde-o como uma senha.", {}),
+    ]),
     ("Publicação", "Ritmo e limites de postagem.", [
+        ("publicar.manual", "booleano", "Você decide o que publicar",
+         "Ligado (recomendado): nenhum corte entra na fila sozinho. Cada corte novo fica "
+         "“Aguardando você”, e no botão Publicar… você escolhe publicar agora ou pôr na fila. "
+         "Desligado: os cortes aprovados pela IA vão direto para a fila.", {}),
+        ("publicar.auto_acima", "inteiro", "Nota para postar sozinho",
+         "Cortes com nota da IA acima deste valor entram sozinhos na fila das plataformas que "
+         "aceitam publicação automática (veja abaixo), mesmo com “Você decide” ligado. 0 = nunca. Vídeos em modo teste e notas "
+         "da IA local (só métricas) não contam.", {"min": 0, "max": 100}),
+        ("publicar.imediato_acima", "inteiro", "Nota para postar na hora",
+         "Acima deste valor o corte é publicado assim que fica pronto, sem esperar o intervalo "
+         "nem os horários (o limite diário de cada plataforma continua valendo). 0 = nunca.",
+         {"min": 0, "max": 100}),
         ("publicar.youtube.ativo", "booleano", "Publicar no YouTube", "", {}),
+        ("publicar.youtube.automatico", "booleano", "YouTube: publicar sozinho pela nota",
+         "Desligado: todo corte espera você avaliar no YouTube, qualquer que seja a nota.", {}),
         ("publicar.youtube.privacidade", "escolha", "Visibilidade no YouTube",
          "Enquanto o projeto do Google não for auditado, o YouTube mantém os envios privados.",
          {"opcoes": [["public", "Público"], ["unlisted", "Não listado"], ["private", "Privado"]]}),
         ("publicar.youtube.max_por_dia", "inteiro", "Máximo por dia no YouTube",
          "A cota padrão da API permite poucos envios diários.", {"min": 0, "max": 100}),
         ("publicar.instagram.ativo", "booleano", "Publicar no Instagram", "", {}),
+        ("publicar.instagram.automatico", "booleano", "Instagram: publicar sozinho pela nota",
+         "Ligado: os cortes que passam das notas abaixo vão sozinhos para o Instagram.", {}),
+        ("publicar.instagram.auto_live_acima", "inteiro", "Instagram: nota de live para postar sozinho",
+         "Corte de live com nota acima disto vai sozinho para o Instagram (0 = desligado).",
+         {"min": 0, "max": 100}),
         ("publicar.instagram.max_por_dia", "inteiro", "Máximo por dia no Instagram", "",
          {"min": 0, "max": 100}),
+        ("publicar.tiktok.ativo", "booleano", "Enviar para o TikTok",
+         "O vídeo chega às notificações do app do TikTok e você publica de lá.", {}),
+        ("publicar.tiktok.automatico", "booleano", "TikTok: enviar sozinho pela nota",
+         "Desligado: todo corte espera você avaliar antes de ir para o TikTok.", {}),
+        ("publicar.tiktok.max_por_dia", "inteiro", "Máximo por dia no TikTok",
+         "O TikTok aceita no máximo 5 envios pendentes em 24 h por conta.", {"min": 0, "max": 5}),
         ("publicar.intervalo_min", "inteiro", "Minutos entre posts de vídeos gravados",
          "Espalha as postagens ao longo do dia. Cortes de live saem na hora.",
          {"min": 0, "max": 1440}),
@@ -188,10 +290,14 @@ SECOES = [
 
 CHAVES = {
     "ANTHROPIC_API_KEY": "Chave da API do Claude",
+    "NVIDIA_API_KEY": "Chave da NVIDIA Build (IA gratuita para testes)",
+    "CLAUDE_CODE_OAUTH_TOKEN": "Token fixo do Claude Code (opcional; gere com claude setup-token)",
     "PAINEL_SENHA": "Senha do painel (só para acesso por outros aparelhos)",
     "ELEVENLABS_API_KEY": "Chave da ElevenLabs (voz mais natural, opcional)",
     "IG_USER_ID": "ID da conta do Instagram",
     "IG_ACCESS_TOKEN": "Token de acesso do Instagram",
+    "TIKTOK_CLIENT_KEY": "Client Key do app do TikTok",
+    "TIKTOK_CLIENT_SECRET": "Client Secret do app do TikTok",
     "YOUTUBE_API_KEY": "Chave da API do YouTube (só para a busca aberta)",
 }
 

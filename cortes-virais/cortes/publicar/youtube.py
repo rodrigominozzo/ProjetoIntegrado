@@ -47,8 +47,10 @@ def estatisticas(cfg_yt: dict) -> dict:
 
 
 def enviar(arquivo: str | Path, titulo: str, descricao: str, hashtags: list[str],
-           cfg_yt: dict, curto: bool = True, capa: str = "") -> str:
-    """Envia o vídeo e devolve o ID. Vertical com menos de 3 min vira Short sozinho."""
+           cfg_yt: dict, curto: bool = True, capa: str = "", progresso=None) -> str:
+    """Envia o vídeo e devolve o ID. Vertical com menos de 3 min vira Short sozinho.
+    `progresso(etapa, fração)` acompanha o envio, de 8 em 8 MB."""
+    progresso = progresso or (lambda etapa, fracao=None: None)
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 
@@ -67,9 +69,14 @@ def enviar(arquivo: str | Path, titulo: str, descricao: str, hashtags: list[str]
                                    chunksize=8 * 1024 * 1024),
     )
     resposta = None
+    progresso("Enviando o vídeo", 0.0)
     while resposta is None:
-        _, resposta = pedido.next_chunk(num_retries=4)
+        status, resposta = pedido.next_chunk(num_retries=4)
+        if status is not None:
+            progresso("Enviando o vídeo", status.progress())
+    progresso("Enviando o vídeo", 1.0)
     if capa and Path(capa).exists():
+        progresso("Enviando a capa", 1.0)
         try:  # capa própria exige canal verificado por telefone; sem isso o vídeo segue sem ela
             yt.thumbnails().set(videoId=resposta["id"],
                                 media_body=MediaFileUpload(capa, mimetype="image/jpeg")).execute()

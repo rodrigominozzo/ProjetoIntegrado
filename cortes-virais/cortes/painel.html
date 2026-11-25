@@ -31,6 +31,10 @@ header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-
 .selo { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px;
         font-size: 12.5px; font-weight: 600; background: var(--painel2); color: var(--suave);
         white-space: nowrap; }
+/* selos com texto longo (fila, previsão): quebram linha dentro do cartão */
+.selo.quebra { white-space: normal; text-align: left; border-radius: 10px; max-width: 100%; line-height: 1.35; }
+button.selo { border: 0; font-family: inherit; cursor: pointer; }
+button.selo:hover { filter: brightness(1.25); }
 .selo.ok { color: var(--ok); } .selo.alerta { color: var(--alerta); }
 .selo.erro { color: var(--erro); } .selo.info { color: var(--info); }
 .selo.teste { background: color-mix(in srgb, var(--alerta) 18%, transparent); color: var(--alerta); }
@@ -111,7 +115,7 @@ td { padding: 8px; border-top: 1px solid var(--borda); vertical-align: top; }
 td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .grupo { margin-bottom: 22px; }
-.grupo > .linha { margin-bottom: 10px; }
+.grupo > .linha, .cab-grupo > .linha { margin-bottom: 10px; }
 .grupo h2 { font-size: 17px; margin: 0; overflow-wrap: anywhere; }
 .cortes { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
 .corte { background: var(--painel); border: 1px solid var(--borda); border-radius: var(--raio);
@@ -194,12 +198,42 @@ textarea { min-height: 220px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo
   </nav>
 
   <section class="aba" id="aba-lives"><div class="grade" id="lista-lives"></div></section>
-  <section class="aba" id="aba-analises"><div id="lista-analises" style="display:grid;gap:14px"></div></section>
-  <section class="aba" id="aba-cortes"><div id="lista-cortes"></div></section>
+  <section class="aba" id="aba-analises"><div id="topo-analises"></div><div id="lista-analises" style="display:grid;gap:14px"></div></section>
+  <section class="aba" id="aba-cortes">
+    <div class="cartao linha" id="filtros-cortes" style="gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+      <label class="sub">Período
+        <select id="filtro-periodo" aria-label="Filtrar cortes por período">
+          <option value="tudo">Tudo</option><option value="hoje">Hoje</option><option value="ontem">Ontem</option>
+          <option value="7">Últimos 7 dias</option><option value="30">Últimos 30 dias</option>
+          <option value="mes">Este mês</option><option value="personalizado">Escolher datas…</option>
+        </select></label>
+      <span id="filtro-datas" class="linha" style="gap:8px">
+        <label class="sub">De <input type="date" id="filtro-de" aria-label="Data inicial"></label>
+        <label class="sub">Até <input type="date" id="filtro-ate" aria-label="Data final"></label>
+      </span>
+      <label class="sub">Situação
+        <select id="filtro-situacao" aria-label="Filtrar cortes por situação">
+          <option value="todos">Todos</option><option value="teste">Em teste</option>
+          <option value="fila">Na fila ou falhou</option><option value="publicados">Publicados</option>
+        </select></label>
+      <span class="espaco"></span><span class="sub" id="contagem-cortes"></span>
+    </div>
+    <div id="lista-cortes"></div>
+  </section>
   <section class="aba" id="aba-publicacoes">
     <div class="contas" id="contas"></div>
+    <div class="cartao linha" style="gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+      <label class="sub">Mostrar
+        <select id="filtro-fila" aria-label="Filtrar a lista de publicações">
+          <option value="fila">Na fila (e enviando)</option><option value="aguardando">Aguardando você</option>
+          <option value="falhou">Com falha</option><option value="publicados">Publicados</option>
+          <option value="tudo">Tudo</option>
+        </select></label>
+      <span class="sub" id="contagem-fila"></span><span class="espaco"></span>
+      <button class="btn mini perigo" data-acao="fila/esvaziar" data-confirmar="Tirar TODOS os cortes da fila? Eles voltam para “Aguardando você” (nada é apagado nem publicado)." data-ok="Fila esvaziada: os cortes voltaram para “Aguardando você”.">Tirar todos da fila</button>
+    </div>
     <div class="cartao"><div class="rolagem"><table>
-      <thead><tr><th>Corte</th><th>Nota</th><th>YouTube</th><th>Instagram</th></tr></thead>
+      <thead><tr><th>Corte</th><th>Nota</th><th>YouTube</th><th>Instagram</th><th>TikTok</th></tr></thead>
       <tbody id="fila"></tbody>
     </table></div><div id="fila-vazia"></div></div>
   </section>
@@ -246,12 +280,19 @@ async function acao(nome, dados, ok) {
       headers: {"Content-Type": "application/json", "X-Painel": "1"}});
     const j = await r.json();
     if (!r.ok) throw new Error(j.erro || "Não foi possível concluir.");
-    if (ok) avisar(ok);
+    if (ok || j.mensagem) avisar(ok || j.mensagem);
     atualizar();
     return true;
   } catch (err) { avisar(err.message, true); return false; }
 }
 // Atualiza só os cartões que mudaram, para não reiniciar vídeos nem fechar painéis.
+// O painel se redesenha a cada 2 s. Se isso acontece entre apertar e soltar o mouse, o botão
+// sob o cursor é trocado por outro igual e o navegador não conta o clique ("às vezes o
+// Publicar não funciona"). Enquanto o mouse está apertado, o que está embaixo dele não muda.
+let apertado = null;
+document.addEventListener("pointerdown", ev => { apertado = ev.target; }, true);
+document.addEventListener("pointerup", () => { apertado = null; }, true);
+document.addEventListener("pointercancel", () => { apertado = null; }, true);
 function sincronizar(caixa, itens, chave, html, classe) {
   const atuais = new Map([...caixa.children].map(el => [el.dataset.chave, el]));
   let anterior = null;
@@ -262,7 +303,19 @@ function sincronizar(caixa, itens, chave, html, classe) {
     atuais.delete(k);
     const novo = html(item);
     const tocando = [...el.querySelectorAll("video")].some(v => !v.paused);
-    if (el._html !== novo && !tocando) { el.innerHTML = novo; el._html = novo; }
+    const segurando = apertado && el.contains(apertado);
+    if (el._html !== novo && !tocando && !segurando) { el.innerHTML = novo; el._html = novo; }
+    else if (el._html !== novo && tocando && !segurando) {
+      // Vídeo tocando: o player fica como está, mas a parte de baixo do cartão (textos e
+      // botões, como as opções do "Publicar…") continua sendo atualizada.
+      const corpo = el.querySelector(":scope > .corpo");
+      if (corpo) {
+        const molde = document.createElement("template");
+        molde.innerHTML = novo;
+        const novoCorpo = [...molde.content.children].find(n => n.classList.contains("corpo"));
+        if (novoCorpo && corpo.innerHTML !== novoCorpo.innerHTML) corpo.innerHTML = novoCorpo.innerHTML;
+      }
+    }
     const esperado = anterior ? anterior.nextSibling : caixa.firstChild;
     if (el !== esperado) caixa.insertBefore(el, esperado);
     anterior = el;
@@ -299,6 +352,7 @@ function cartaoLive(l) {
     </div>
     ${grafico(l)}
     ${l.erro ? `<div class="msg-erro">${e(l.erro)}</div>` : ""}
+    ${l.passado ? `<div class="sub" style="margin-top:10px"><b>Antes do play:</b> ${e(l.passado.etapa)}${l.passado.cortes ? ` · ${l.passado.cortes} corte(s)` : ""}</div>` : ""}
     ${l.picos.length ? `<ul class="picos">${l.picos.slice().reverse().map(p =>
         `<li><time>${hora(p.hora)}</time><span><b>Pico ${p.nota}</b> — ${e(p.resultado)}</span></li>`).join("")}</ul>`
       : `<div class="sub" style="margin-top:10px">Nenhum pico ainda. O primeiro minuto serve para medir o ritmo normal da live.</div>`}`;
@@ -313,33 +367,74 @@ function painelAnalise(id) {
   const cor = c => c.escolhido ? "var(--ok)" : c.aprovado ? "var(--alerta)" : "var(--erro)";
   const faixas = a.candidatos.map(c => `<rect x="${(c.inicio / d * L).toFixed(1)}" width="${Math.max(3, (c.fim - c.inicio) / d * L).toFixed(1)}" y="0" height="${A}" fill="${cor(c)}" opacity=".28"><title>${e(tempo(c.inicio))} – nota ${Math.round(c.nota)}</title></rect>`).join("");
   const pts = a.pontos.map((n, i) => `${(i / Math.max(1, a.pontos.length - 1) * L).toFixed(1)},${(A - 4 - n / topo * (A - 10)).toFixed(1)}`).join(" ");
-  const linhas = a.candidatos.slice().sort((x, y) => y.nota - x.nota).map(c => `<tr>
-      <td class="num">${tempo(c.inicio)} – ${tempo(c.fim)}</td>
+  const ytId = a.video_id || id, temYt = /^[\w-]{11}$/.test(ytId);
+  const SITUACOES = {cortado: ["Cortado", "ok"], reprovado: ["Reprovado pela IA", "erro"],
+    abaixo: [`Abaixo da nota mínima${a.nota_minima ? ` (${a.nota_minima})` : ""}`, "alerta"],
+    repetido: ["Repetido", "alerta"], fora: ["Ficou de fora (limite por vídeo)", "alerta"]};
+  const linhas = a.candidatos.map((c, pos) => ({...c, pos})).sort((x, y) => y.nota - x.nota).map(c => {
+    const chave = `${id}:${c.pos}`, g = (estado && estado.trechos || {})[chave];
+    const sit = g && g.status === "feito" ? "cortado"
+      : c.situacao || (c.escolhido ? "cortado" : c.aprovado ? "fora" : "reprovado");
+    const [rotulo, tipo] = SITUACOES[sit] || SITUACOES.fora;
+    let acoes = "";
+    if (sit !== "cortado") {
+      acoes = (temYt ? `<button class="btn mini" data-previa="${e(chave)}" aria-label="Assistir este trecho">${previas.has(chave) ? "Fechar vídeo" : "▶ Assistir trecho"}</button>` : "")
+        + (g && g.status === "rodando" ? `<span class="sub">Gerando: ${e(g.etapa)}…</span>`
+          : `<button class="btn mini principal" data-acao="trecho/cortar" data-video="${e(id)}" data-pos="${c.pos}" data-ok="Gerando o corte deste trecho. Ele aparece na aba Cortes, em modo teste, em cerca de um minuto." aria-label="Gerar corte deste trecho">Gerar corte deste trecho</button>`);
+    } else if (g && g.status === "feito") {
+      acoes = `<button class="btn mini" data-ir="cortes">Ver na aba Cortes</button>`;
+    }
+    const erro = g && g.status === "erro" ? `<div class="msg-erro">${e(g.erro)}</div>` : "";
+    const previa = previas.has(chave) && temYt ? `<tr><td colspan="4"><iframe class="previa-yt" title="Trecho ${e(tempo(c.inicio))} a ${e(tempo(c.fim))}" src="https://www.youtube-nocookie.com/embed/${e(ytId)}?start=${Math.floor(c.inicio)}&end=${Math.ceil(c.fim)}&autoplay=1&rel=0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen style="width:100%;max-width:640px;aspect-ratio:16/9;border:0;border-radius:8px"></iframe></td></tr>` : "";
+    return `<tr>
+      <td class="num">${tempo(c.inicio)} – ${tempo(c.fim)}<div class="sub">${Math.round(c.fim - c.inicio)} s</div></td>
       <td class="num"><b>${Math.round(c.nota)}</b></td>
-      <td><span class="selo ${c.escolhido ? "ok" : c.aprovado ? "alerta" : "erro"}">${c.escolhido ? "Cortado" : c.aprovado ? "Ficou de fora" : "Reprovado"}</span></td>
-      <td><b>${e(c.titulo)}</b>${c.gancho ? `<div class="sub">Gancho: “${e(c.gancho)}”</div>` : ""}<div class="sub">${e(c.motivo)}</div></td></tr>`).join("");
+      <td><span class="selo ${tipo}">${rotulo}</span></td>
+      <td><b>${e(c.titulo)}</b>${c.gancho ? `<div class="sub">Gancho: “${e(c.gancho)}”</div>` : ""}<div class="sub">${e(c.motivo)}</div>
+        ${acoes ? `<div class="acoes" style="margin-top:6px">${acoes}</div>` : ""}${erro}</td></tr>${previa}`;
+  }).join("");
   return `<div class="analise">
     <svg class="linha-tempo" viewBox="0 0 ${L} ${A}" preserveAspectRatio="none" role="img" aria-label="Pontuação ao longo do vídeo">${faixas}
       <polyline points="${pts}" fill="none" stroke="var(--texto)" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>
     <div class="eixo"><span>0:00</span><span>${tempo(d / 2)}</span><span>${tempo(d)}</span></div>
-    <div class="legenda"><span><i style="background:var(--ok)"></i>Cortado</span><span><i style="background:var(--alerta)"></i>Aprovado, mas ficou de fora</span><span><i style="background:var(--erro)"></i>Reprovado</span>
+    <div class="legenda"><span><i style="background:var(--ok)"></i>Cortado</span><span><i style="background:var(--alerta)"></i>Ficou de fora (nota, repetição ou limite)</span><span><i style="background:var(--erro)"></i>Reprovado</span>
       <span>Sinais: ${e(Object.keys(a.sinais).join(", "))}${a.com_ia ? " + IA" : " (sem IA)"}</span></div>
     <div class="rolagem"><table><thead><tr><th>Trecho</th><th>Nota</th><th>Resultado</th><th>Título e motivo</th></tr></thead><tbody>${linhas}</tbody></table></div>
   </div>`;
 }
-const botaoAnalise = id => `<button class="btn mini" data-analise="${e(id)}">${abertas.has(id) ? "Ocultar análise" : "Ver análise"}</button>`;
+const previas = new Set();  // trechos da análise com o vídeo aberto ("video:posição")
+const botaoAnalise = id =>`<button class="btn mini" data-analise="${e(id)}">${abertas.has(id) ? "Ocultar análise" : "Ver análise"}</button>`;
 
+function cartaoAnterior(h) {
+  const selo = {feito: ["Analisado", "ok"], teste: ["Analisado em teste", "teste"], parcial: ["Cancelada", ""],
+                erro: ["Erro", "erro"]}[h.status] || ["Analisado", ""];
+  return `<div class="linha"><span class="selo ${selo[1]}">${selo[0]}</span><span class="selo">análise anterior</span>
+      <span class="espaco"></span>${botaoAnalise(h.video_id)}</div>
+    <h3 style="margin-top:10px">${e(h.titulo)}</h3>
+    <div class="sub">${e(h.canal)}${h.canal ? " · " : ""}${ha(h.criado)}</div>
+    ${abertas.has(h.video_id) ? painelAnalise(h.video_id) : ""}`;
+}
 function cartaoTarefa(t) {
-  const rodando = ["identificando", "fila", "rodando"].includes(t.status);
-  const selo = {identificando: ["Identificando", "info"], fila: ["Na fila", ""], rodando: ["Analisando", "info"],
-                feito: ["Concluído", "ok"], erro: ["Erro", "erro"]}[t.status];
+  const agendada = t.status === "agendada";
+  const rodando = ["identificando", "fila", "rodando", "pausado"].includes(t.status);
+  const selo = t.cancelar && (rodando || agendada) ? ["Cancelando", "alerta"]
+    : ({identificando: ["Identificando", "info"], fila: ["Na fila", ""], rodando: ["Analisando", "info"],
+        pausado: ["Pausada", "alerta"], feito: ["Concluído", "ok"], erro: ["Erro", "erro"],
+        cancelado: ["Cancelada", ""], agendada: ["Live agendada", "info"]}[t.status]);
   let meio = "";
-  if (rodando) {
+  if (agendada) {
+    const quando = t.inicio_live ? `Começa ${horaPrevista(t.inicio_live)} (${t.inicio_live > Date.now() / 1000 ? faltam(t.inicio_live) : "no horário marcado; aguardando entrar no ar"}).`
+                                 : "O YouTube não informou o horário.";
+    meio = `<div class="sub" style="margin-top:8px">${quando} O acompanhamento começa sozinho quando a live entrar no ar.<br>${e(t.etapa)}…</div>`;
+  } else if (rodando) {
     const pct = t.fracao == null ? null : Math.round(t.fracao * 100);
-    meio = `<div class="barra ${pct == null ? "livre" : ""}"><i style="${pct == null ? "" : `width:${pct}%`}"></i></div>
-      <div class="sub">${e(t.etapa)}${pct == null ? "" : ` · ${pct}%`} · ${tempo(Date.now() / 1000 - t.inicio)}</div>`;
+    const etapa = t.status === "pausado" ? `Pausada em: ${t.etapa}` : t.etapa;
+    meio = `<div class="barra ${pct == null && t.status !== "pausado" ? "livre" : ""}"><i style="${pct == null ? "" : `width:${pct}%`}"></i></div>
+      <div class="sub">${e(etapa)}${pct == null ? "" : ` · ${pct}%`} · ${tempo(Date.now() / 1000 - t.inicio)}</div>`;
   } else if (t.status === "feito") {
     meio = `<div class="sub" style="margin-top:8px">${t.cortes ? `${t.cortes} ${t.cortes === 1 ? "corte gerado" : "cortes gerados"}` : "Nenhum trecho atingiu a nota mínima"} em ${tempo(t.fim - t.inicio)}${t.teste ? " · nada foi publicado" : ""}.</div>`;
+  } else if (t.status === "cancelado") {
+    meio = `<div class="sub" style="margin-top:8px">Análise cancelada. ${t.cortes ? `${t.cortes} ${t.cortes === 1 ? "corte pronto foi mantido" : "cortes prontos foram mantidos"} na aba Cortes.` : "Nenhum corte tinha ficado pronto."} Enviar o vídeo de novo continua sem repetir os trechos já cortados.</div>`;
   } else {
     meio = `<div class="msg-erro">${e(t.erro)}</div>`;
   }
@@ -348,8 +443,14 @@ function cartaoTarefa(t) {
       ${t.origem !== "manual" ? `<span class="selo">${e(t.origem)}</span>` : ""}
       <span class="espaco"></span>
       ${t.status === "feito" ? botaoAnalise(t.video_id) : ""}
-      ${t.status === "feito" && t.cortes ? `<button class="btn mini" data-ir="cortes">Ver cortes</button>` : ""}
-      ${rodando ? "" : `<button class="btn mini" data-acao="tarefa/fechar" data-id="${e(t.id)}">Fechar</button>`}</div>
+      ${["feito", "cancelado"].includes(t.status) && t.cortes ? `<button class="btn mini" data-ir="cortes">Ver cortes</button>` : ""}
+      ${rodando && !t.cancelar ? (t.pausar
+        ? `<button class="btn mini" data-acao="tarefa/retomar" data-id="${e(t.id)}" data-ok="Análise retomada." aria-label="Retomar a análise">▶ Retomar</button>`
+        : `<button class="btn mini" data-acao="tarefa/pausar" data-id="${e(t.id)}" data-ok="A análise pausa ao fim da etapa atual." aria-label="Pausar a análise">⏸ Pausar</button>`)
+        + `<button class="btn mini perigo" data-acao="tarefa/cancelar" data-id="${e(t.id)}" data-confirmar="Cancelar esta análise? Os cortes já prontos ficam salvos." data-ok="Cancelando ao fim da etapa atual. Os cortes prontos ficam salvos." aria-label="Cancelar a análise">✕ Cancelar</button>` : ""}
+      ${agendada && !t.cancelar ? `<button class="btn mini perigo" data-acao="tarefa/cancelar" data-id="${e(t.id)}" data-confirmar="Parar de esperar por esta live?" data-ok="Espera cancelada." aria-label="Cancelar a espera pela live">✕ Cancelar</button>` : ""}
+      ${t.status === "erro" ? `<button class="btn mini" data-acao="tarefa/tentar_de_novo" data-id="${e(t.id)}" data-ok="Enviado de novo, com as mesmas opções." aria-label="Tentar de novo esta análise">↻ Tentar de novo</button>` : ""}
+      ${rodando || agendada ? "" : `<button class="btn mini" data-acao="tarefa/fechar" data-id="${e(t.id)}">Fechar</button>`}</div>
     <h3 style="margin-top:10px">${e(t.titulo)}</h3>
     <div class="sub">${e(t.canal)}</div>${meio}
     ${t.status === "feito" && abertas.has(t.video_id) ? painelAnalise(t.video_id) : ""}`;
@@ -363,14 +464,51 @@ function criterios(n) {
     `<span>${nome}</span><div class="barra"><i style="width:${n[k] || 0}%"></i></div><b>${n[k] ?? "—"}</b>`).join("")}</div>`;
 }
 const vistas = p => p.vistas == null ? "" : ` · ${Number(p.vistas).toLocaleString("pt-BR")} visualizações`;
-function seloPlataforma(nome, p) {
+function seloPlataforma(nome, p, c, chave) {
   if (p.situacao === "não se aplica") return "";
-  const tipo = {publicado: "ok", "na fila": "info", falhou: "erro", teste: ""}[p.situacao];
-  const texto = p.situacao === "teste" ? "não enviado" : p.situacao;
-  return `<span class="selo ${tipo}" title="${e(p.erro)}">${nome}: ${texto}${vistas(p)}</span>`;
+  const conta = estado && estado.contas ? estado.contas[chave] : null;
+  if (c && conta && conta.ativo && conta.conectado && c.existe && ["na fila", "falhou"].includes(p.situacao)) {
+    // Clicar no selo publica na hora (pede confirmação, para não sair sem querer).
+    const dica = p.situacao === "falhou" ? "falhou · tentar de novo ▶"
+      : p.previsto && p.previsto.quando ? `${p.previsto.posicao}º na fila · ${horaPrevista(p.previsto.quando)} · publicar ▶`
+      : "na fila · publicar ▶";
+    const balao = p.situacao === "falhou" ? `Falhou: ${p.erro || "erro"}. Clique para tentar de novo.`
+      : `${p.previsto && p.previsto.quando ? `Sai ${horaPrevista(p.previsto.quando)} (${faltam(p.previsto.quando)}). ` : ""}Clique para publicar agora.`;
+    return `<button class="selo quebra ${p.situacao === "falhou" ? "erro" : "info"}" data-acao="corte/publicar" data-id="${c.id}" data-plataforma="${chave}" data-confirmar="Publicar agora no ${nome}?" data-ok="Publicação iniciada no ${nome}." title="${e(balao)}" aria-label="Publicar agora no ${nome}">${nome}: ${e(dica)}</button>`;
+  }
+  const tipo = {publicado: "ok", "na fila": "info", enviando: "info", falhou: "erro", teste: "", aguardando: "alerta"}[p.situacao];
+  let texto = p.situacao === "teste" ? "não enviado" : p.situacao === "aguardando" ? "aguardando você" : p.situacao;
+  if (p.situacao === "enviando" && p.envio)
+    texto = `enviando${p.envio.fracao == null ? "…" : ` ${Math.round(p.envio.fracao * 100)}%`}`;
+  if (p.situacao === "na fila" && p.previsto)
+    texto = p.previsto.quando ? `${p.previsto.posicao}º na fila, sai ${horaPrevista(p.previsto.quando)}` : `na fila (${MOTIVOS_FILA[p.previsto.motivo] || ""})`;
+  return `<span class="selo quebra ${tipo}" title="${e(p.erro)}">${nome}: ${e(texto)}${vistas(p)}</span>`;
+}
+function ajusteCorte(c) {
+  const r = c.refazendo;
+  if (r && r.status === "rodando")
+    return `<div class="sub" style="margin-top:8px"><span class="selo info">Refazendo</span> ${e(r.etapa)}…</div>`;
+  if (!c.ajustavel) return "";
+  const aviso = r && r.status === "erro" ? `<div class="msg-erro">${e(r.erro)}</div>`
+    : r && r.status === "feito" ? `<div class="sub">Corte refeito. Confira o vídeo acima.</div>` : "";
+  const dur = c.fim - c.inicio;
+  return `<details class="ajuste-corte" ${r ? "open" : ""}><summary>Ajustar começo e fim</summary>
+    <div class="sub">Hoje: ${tempo(c.inicio)} a ${tempo(c.fim)} (${Math.round(dur)} s). Use segundos: negativo é antes, positivo é depois.</div>
+    <div class="linha" style="margin-top:6px;gap:12px;flex-wrap:wrap">
+      <label class="sub">Começo <input type="number" step="1" value="0" data-ajuste-ini="${c.id}" style="width:80px" aria-label="Segundos para mudar o começo do corte"></label>
+      <label class="sub">Fim <input type="number" step="1" value="0" data-ajuste-fim="${c.id}" style="width:80px" aria-label="Segundos para mudar o fim do corte"></label>
+      <button class="btn mini" data-refazer="${c.id}">Refazer corte</button>
+    </div>
+    <div class="linha" style="margin-top:6px;gap:6px;flex-wrap:wrap">
+      <span class="sub">Atalhos:</span>
+      <button class="btn mini" data-atalho="${c.id}" data-campo="fim" data-seg="10" aria-label="Terminar 10 segundos depois">Fim +10 s</button>
+      <button class="btn mini" data-atalho="${c.id}" data-campo="fim" data-seg="20" aria-label="Terminar 20 segundos depois">Fim +20 s</button>
+      <button class="btn mini" data-atalho="${c.id}" data-campo="ini" data-seg="-5" aria-label="Começar 5 segundos antes">Começo −5 s</button>
+      <button class="btn mini" data-atalho="${c.id}" data-campo="fim" data-seg="-5" aria-label="Terminar 5 segundos antes">Fim −5 s</button>
+    </div>${aviso}</details>`;
 }
 function cartaoCorte(c) {
-  return `${c.existe ? `<video src="/midia/${c.id}" controls preload="${c.capa ? "none" : "metadata"}" playsinline ${c.capa ? `poster="/capa/${c.id}"` : ""}></video>`
+  return `${c.existe ? `<video src="/midia/${c.id}?v=${encodeURIComponent(c.versao)}" controls preload="${c.capa ? "none" : "metadata"}" playsinline ${c.capa ? `poster="/capa/${c.id}?v=${encodeURIComponent(c.versao)}"` : ""}></video>`
                      : `<div class="sem-arquivo">Arquivo removido</div>`}
     <div class="corpo">
       <div class="linha"><span class="nota">${Math.round(c.nota)}</span><span class="sub">nota · ${tempo(c.inicio)}–${tempo(c.fim)} · ${ha(c.criado)}</span></div>
@@ -378,49 +516,213 @@ function cartaoCorte(c) {
       ${c.gancho ? `<div class="sub">Gancho: “${e(c.gancho)}”</div>` : ""}
       ${c.narracao ? `<div class="sub">Narração: “${e(c.narracao)}”</div>` : ""}
       ${criterios(c.notas)}
-      <div class="linha">${c.teste ? '<span class="selo teste">Teste</span>' : seloPlataforma("YouTube", c.yt) + seloPlataforma("Instagram", c.ig)}</div>
+      <div class="linha">${c.teste ? '<span class="selo teste">Teste</span>' : seloPlataforma("YouTube", c.yt, c, "yt") + seloPlataforma("Instagram", c.ig, c, "ig") + seloPlataforma("TikTok", c.tt, c, "tt")}</div>
       <div class="acoes">
-        ${c.teste ? `<button class="btn mini principal" data-acao="corte/aprovar" data-id="${c.id}" data-ok="Corte enviado para a fila de publicação.">Aprovar e publicar</button>` : ""}
-        ${c.yt.situacao !== "publicado" && c.ig.situacao !== "publicado" ? `<button class="btn mini perigo" data-acao="corte/remover" data-id="${c.id}" data-confirmar="Remover este corte?">Remover</button>` : ""}
+        ${botoesDecisao(c)}
+        ${PLATS.every(p => c[p].situacao !== "publicado") ? `<button class="btn mini perigo" data-acao="corte/remover" data-id="${c.id}" data-confirmar="Remover este corte?">Remover</button>` : ""}
       </div>
+      ${ajusteCorte(c)}
     </div>`;
 }
-function grupoCortes(g) {
+// Publicar… → você escolhe: agora ou fila. Nada entra na fila sem essa escolha.
+let filtroFila = "fila";
+try { filtroFila = localStorage.getItem("filtroFila") || "fila"; } catch (err) {}
+document.addEventListener("change", ev => {
+  if (ev.target.id !== "filtro-fila") return;
+  filtroFila = ev.target.value;
+  try { localStorage.setItem("filtroFila", filtroFila); } catch (err) {}
+  if (estado) desenhar();
+});
+const decidindo = new Set();
+const marcadas = new Map();  // corte -> plataformas marcadas no "Publicar…"
+document.addEventListener("change", ev => {
+  const caixa = ev.target.closest("[data-plat-corte]");
+  if (!caixa) return;
+  const sel = marcadas.get(Number(caixa.dataset.platCorte)) || new Set();
+  caixa.checked ? sel.add(caixa.value) : sel.delete(caixa.value);
+  marcadas.set(Number(caixa.dataset.platCorte), sel);
+});
+const PLATS = ["yt", "ig", "tt"], NOME_PLAT = {yt: "YouTube", ig: "Instagram", tt: "TikTok"};
+const naFila = c => PLATS.some(p => ["na fila", "falhou"].includes(c[p].situacao));
+function botoesDecisao(c) {
+  const pendentes = c.teste ? PLATS.filter(p => c[p].situacao !== "não se aplica") : (c.aguardando || []);
+  let html = "";
+  if (pendentes.length) {
+    if (!decidindo.has(c.id)) {
+      html += `<button class="btn mini principal" data-decidir="${c.id}" aria-label="Escolher onde e como publicar este corte">Publicar…</button>`;
+    } else {
+      if (!marcadas.has(c.id)) marcadas.set(c.id, new Set(pendentes));
+      const caixa = (p, nome) => pendentes.includes(p)
+        ? `<label class="sub" style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" data-plat-corte="${c.id}" value="${p}" ${marcadas.get(c.id).has(p) ? "checked" : ""}> ${nome}</label>` : "";
+      html += `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;width:100%">
+        <span class="sub">Onde?</span>${caixa("yt", "YouTube")}${caixa("ig", "Instagram")}${caixa("tt", "TikTok")}</div>
+        <button class="btn mini principal" data-decisao="agora" data-id="${c.id}" aria-label="Publicar agora nas plataformas marcadas">▶ Publicar agora</button>
+        <button class="btn mini" data-decisao="fila" data-id="${c.id}" aria-label="Colocar na fila das plataformas marcadas">＋ Colocar na fila</button>
+        <button class="btn mini" data-decidir="${c.id}" aria-label="Cancelar">Cancelar</button>`;
+    }
+  }
+  if (!c.teste && naFila(c))
+    html += `<button class="btn mini" data-acao="corte/tirar_da_fila" data-id="${c.id}" data-ok="Corte tirado da fila. Ele fica aguardando você." aria-label="Tirar da fila de postagem">Tirar da fila</button>`;
+  return html;
+}
+// ---------- filtro da aba Cortes (fica salvo neste computador) ----------
+const filtro = {periodo: "tudo", de: "", ate: "", situacao: "todos"};
+try { Object.assign(filtro, JSON.parse(localStorage.getItem("filtroCortes") || "{}")); } catch (err) {}
+function intervaloFiltro() {
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const d = hoje.getTime() / 1000, dia = 86400;
+  const data = (txt, fim) => txt ? new Date(`${txt}T00:00`).getTime() / 1000 + (fim ? dia : 0) : (fim ? Infinity : 0);
+  return ({hoje: [d, Infinity], ontem: [d - dia, d], 7: [d - 6 * dia, Infinity], 30: [d - 29 * dia, Infinity],
+           mes: [new Date(hoje.getFullYear(), hoje.getMonth(), 1).getTime() / 1000, Infinity],
+           personalizado: [data(filtro.de, false), data(filtro.ate, true)]})[filtro.periodo] || [0, Infinity];
+}
+function passaFiltro(c) {
+  const [de, ate] = intervaloFiltro();
+  if (c.criado < de || c.criado >= ate) return false;
+  const publicado = PLATS.some(p => c[p].situacao === "publicado");
+  const pendente = PLATS.some(p => ["na fila", "enviando", "falhou"].includes(c[p].situacao));
+  return ({teste: c.teste, fila: !c.teste && pendente, publicados: publicado})[filtro.situacao] ?? true;
+}
+function aplicarFiltroNaTela() {
+  $("#filtro-periodo").value = filtro.periodo;
+  $("#filtro-situacao").value = filtro.situacao;
+  $("#filtro-de").value = filtro.de; $("#filtro-ate").value = filtro.ate;
+  $("#filtro-datas").style.display = filtro.periodo === "personalizado" ? "" : "none";
+}
+document.addEventListener("change", ev => {
+  const id = ev.target.id;
+  if (!["filtro-periodo", "filtro-situacao", "filtro-de", "filtro-ate"].includes(id)) return;
+  filtro[{"filtro-periodo": "periodo", "filtro-situacao": "situacao", "filtro-de": "de", "filtro-ate": "ate"}[id]] = ev.target.value;
+  try { localStorage.setItem("filtroCortes", JSON.stringify(filtro)); } catch (err) {}
+  aplicarFiltroNaTela();
+  if (estado) desenhar();
+});
+const dataCurta = ts => new Date(ts * 1000).toLocaleDateString("pt-BR", {day: "2-digit", month: "2-digit", year: "numeric"});
+
+// Cada grupo (vídeo ou live) tem cabeçalho e lista de cartões atualizados em separado: um
+// corte novo entra na lista sem redesenhar os outros vídeos do grupo (antes o grupo inteiro
+// era refeito e os players recarregavam).
+function sincronizarGrupos(caixa, grupos) {
+  const atuais = new Map([...caixa.children].map(el => [el.dataset.chave, el]));
+  let anterior = null;
+  for (const g of grupos) {
+    let el = atuais.get(g.video_id);
+    if (!el || !el.querySelector(":scope > .cortes")) {
+      el = document.createElement("div"); el.className = "grupo"; el.dataset.chave = g.video_id;
+      el.innerHTML = '<div class="cab-grupo"></div><div class="cortes"></div>';
+    }
+    atuais.delete(g.video_id);
+    const cab = el.firstElementChild, novo = cabecalhoGrupo(g);
+    if (cab._html !== novo && !(apertado && cab.contains(apertado))) { cab.innerHTML = novo; cab._html = novo; }
+    sincronizar(el.lastElementChild, g.cortes, c => c.id, cartaoCorte, "corte");
+    const esperado = anterior ? anterior.nextSibling : caixa.firstChild;
+    if (el !== esperado) caixa.insertBefore(el, esperado);
+    anterior = el;
+  }
+  for (const el of atuais.values()) el.remove();
+}
+// Ordem fixa: cada vídeo/live fica onde apareceu (pelo primeiro corte dele, mais novos em
+// cima). Um corte novo de uma live não joga mais o grupo dela para o topo.
+const primeiroCorte = new Map();
+function ordemDosGrupos(grupos) {
+  for (const g of grupos) {
+    const ini = Math.min(...g.cortes.map(c => c.criado));
+    if (!primeiroCorte.has(g.video_id) || ini < primeiroCorte.get(g.video_id)) primeiroCorte.set(g.video_id, ini);
+  }
+  return [...grupos].sort((a, b) => primeiroCorte.get(b.video_id) - primeiroCorte.get(a.video_id));
+}
+function cabecalhoGrupo(g) {
+  const datas = g.cortes.map(c => c.criado), maisNovo = Math.max(...datas), maisVelho = Math.min(...datas);
+  const quando = dataCurta(maisNovo) === dataCurta(maisVelho) ? dataCurta(maisNovo) : `${dataCurta(maisVelho)} a ${dataCurta(maisNovo)}`;
   return `<div class="linha"><h2>${e(g.titulo)}</h2>
+      <span class="selo" title="Data dos cortes">${quando}</span>
       <span class="selo">${g.origem === "live" ? "Live" : "Vídeo"}</span>
       ${g.cortes.some(c => c.origem === "compilacao") ? '<span class="selo ok">com compilação</span>' : ""}
       <span class="sub">${e(g.canal)}${g.canal ? " · " : ""}${g.cortes.length} ${g.cortes.length === 1 ? "corte" : "cortes"}</span>
       <span class="espaco"></span>${g.origem === "live" ? "" : botaoAnalise(g.video_id)}</div>
-    ${abertas.has(g.video_id) ? painelAnalise(g.video_id) + '<div style="height:12px"></div>' : ""}
-    <div class="cortes">${g.cortes.map(c => `<div class="corte">${cartaoCorte(c)}</div>`).join("")}</div>`;
+    ${abertas.has(g.video_id) ? painelAnalise(g.video_id) + '<div style="height:12px"></div>' : ""}`;
 }
 
 // ---------- publicações ----------
 function cartaoConta(p, nome, c) {
   const situacao = !c.ativo ? ["Desligado na configuração", "alerta"] : c.conectado ? ["Conectado", "ok"] : ["Não conectado", "erro"];
-  const ajuda = p === "yt" ? "Rode python -m cortes login-youtube para autorizar o canal."
-                           : "Preencha IG_USER_ID e IG_ACCESS_TOKEN no arquivo .env e reinicie o painel.";
+  const ajuda = {yt: "Conecte o canal na aba Configurações (Primeiros passos, passo 2).",
+                 ig: "Cole o ID da conta e o token do Instagram na aba Configurações (passo 3).",
+                 tt: "Conecte o TikTok na aba Configurações (passo 4)."}[p];
   return `<div class="cartao"><div class="linha"><h3>${nome}</h3><span class="espaco"></span><span class="selo ${situacao[1]}">${situacao[0]}</span></div>
-    <div style="margin-top:10px"><b class="grande">${c.hoje}</b> <span class="sub">de ${c.max} publicações nas últimas 24 h</span></div>
+    <div style="margin-top:10px"><b class="grande">${c.hoje}</b> <span class="sub">de ${c.max} ${p === "tt" ? "envios ao app" : "publicações"} nas últimas 24 h</span></div>
     ${c.ativo && !c.conectado ? `<div class="sub" style="margin-top:6px">${ajuda}</div>` : ""}</div>`;
+}
+function horaPrevista(ts) {
+  const d = new Date(ts * 1000), hoje = new Date(), amanha = new Date(Date.now() + 86400e3);
+  const hm = d.toLocaleTimeString("pt-BR", {hour: "2-digit", minute: "2-digit"});
+  if (d.toDateString() === hoje.toDateString()) return `às ${hm}`;
+  if (d.toDateString() === amanha.toDateString()) return `amanhã às ${hm}`;
+  return `${d.toLocaleDateString("pt-BR", {day: "2-digit", month: "2-digit"})} às ${hm}`;
+}
+function faltam(ts) {
+  const m = Math.max(0, Math.round((ts - Date.now() / 1000) / 60));
+  if (m < 1) return "em instantes";
+  if (m < 60) return `em ${m} min`;
+  if (m < 1440) return `em ${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`;
+  const dias = Math.floor(m / 1440), horas = Math.floor((m % 1440) / 60);
+  return `em ${dias} ${dias === 1 ? "dia" : "dias"}${horas ? ` e ${horas} h` : ""}`;
+}
+const MOTIVOS_FILA = {
+  agora: "sai na próxima verificação (a cada 30 s)", intervalo: "aguardando o intervalo entre posts",
+  horario: "aguardando o horário de postagem", limite: "limite de posts em 24 h atingido",
+  pausada: "publicação automática pausada", sem_conta: "conta não conectada",
+  desativada: "plataforma desligada nas Configurações", limite_zero: "limite diário é 0",
+  nova_tentativa: "a plataforma recusou por um momento; nova tentativa automática marcada"};
+function previsaoFila(s) {
+  const pv = s.previsto;
+  if (!pv) return "";
+  const quando = pv.quando ? ` · sai ${horaPrevista(pv.quando)} (${faltam(pv.quando)})` : "";
+  return `<span class="sub">${pv.posicao}º na fila${quando}<br>${e(MOTIVOS_FILA[pv.motivo] || "")}</span>`;
+}
+function andamentoEnvio(s) {
+  const v = s.envio || {}, pct = v.fracao == null ? null : Math.round(v.fracao * 100);
+  return `<span class="selo info">${e(v.etapa || "Enviando")}${pct == null ? "…" : ` ${pct}%`}</span>
+    <div class="barra ${pct == null ? "livre" : ""}" role="progressbar" aria-label="Andamento do envio" ${pct == null ? "" : `aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"`}><i style="${pct == null ? "" : `width:${pct}%`}"></i></div>
+    ${v.inicio ? `<span class="sub">há ${tempo(Date.now() / 1000 - v.inicio)}</span>` : ""}`;
 }
 function celula(c, p, conta) {
   const s = c[p];
+  if (s.situacao === "enviando") return `<div class="celula">${andamentoEnvio(s)}</div>`;
+  const nome = NOME_PLAT[p];
+  if (s.situacao === "aguardando") {
+    const pode = conta.ativo && conta.conectado && c.existe;
+    return `<div class="celula"><span class="selo alerta">Aguardando você</span><span class="sub">fora da fila</span>
+      <div class="acoes">${pode ? `<button class="btn mini principal" data-acao="corte/decidir" data-id="${c.id}" data-modo="agora" data-plataformas="${p}" data-confirmar="Publicar agora só no ${nome}?" data-ok="Publicação iniciada no ${nome}." aria-label="Publicar agora no ${nome}">▶ Publicar agora</button>` : ""}
+      <button class="btn mini" data-acao="corte/decidir" data-id="${c.id}" data-modo="fila" data-plataformas="${p}" data-ok="Colocado na fila do ${nome}." aria-label="Colocar na fila do ${nome}">＋ Pôr na fila</button></div></div>`;
+  }
+  if (s.situacao === "publicado" && p === "tt")  // vai para o app: você publica de lá
+    return `<div class="celula"><span class="selo ok">No app do TikTok</span><span class="sub">${ha(s.quando)} · abra a notificação no celular e publique</span>
+      <button class="btn mini" data-copiar="${e(legendaTikTok(c))}" aria-label="Copiar a legenda sugerida para o TikTok">Copiar legenda</button></div>`;
   if (s.situacao === "publicado")
     return `<div class="celula"><span class="selo ok">Publicado</span><span class="sub">${ha(s.quando)}${vistas(s)}${link(s.link) ? ` · <a href="${link(s.link)}" target="_blank" rel="noopener noreferrer">abrir</a>` : ""}</span></div>`;
   if (s.situacao === "não se aplica") return `<div class="celula"><span class="sub">Só no YouTube</span></div>`;
   const pode = conta.ativo && conta.conectado && c.existe;
-  const botao = pode ? `<button class="btn mini" data-acao="corte/publicar" data-id="${c.id}" data-plataforma="${p}" data-ok="Publicação iniciada.">${s.situacao === "falhou" ? "Tentar de novo" : "Publicar agora"}</button>` : "";
+  const botao = (pode ? `<button class="btn mini" data-acao="corte/publicar" data-id="${c.id}" data-plataforma="${p}" data-confirmar="Publicar agora no ${nome}?" data-ok="Publicação iniciada.">${s.situacao === "falhou" ? "Tentar de novo" : "Publicar agora"}</button>` : "")
+    + `<button class="btn mini" data-acao="corte/tirar_da_fila" data-id="${c.id}" data-plataformas="${p}" data-ok="Tirado da fila do ${nome}." aria-label="Tirar da fila do ${nome}">Tirar da fila</button>`;
   const selo = s.situacao === "falhou" ? '<span class="selo erro">Falhou</span>'
              : !conta.conectado || !conta.ativo ? '<span class="selo">Aguardando conta</span>' : '<span class="selo info">Na fila</span>';
-  return `<div class="celula">${selo}${s.erro ? `<span class="msg-erro" style="margin:0">${e(s.erro)}</span>` : ""}${botao}</div>`;
+  return `<div class="celula">${selo}${s.situacao === "na fila" ? previsaoFila(s) : ""}${s.erro ? `<span class="msg-erro" style="margin:0">${e(s.erro)}</span>` : ""}${botao}</div>`;
 }
 const linhaFila = c => `<td><b>${e(c.titulo)}</b><div class="sub">${e(c.video)}${c.origem === "live" ? " · live" : ""}</div></td>
-  <td class="num"><b>${Math.round(c.nota)}</b></td><td>${celula(c, "yt", estado.contas.yt)}</td><td>${celula(c, "ig", estado.contas.ig)}</td>`;
+  <td class="num"><b>${Math.round(c.nota)}</b></td>${PLATS.map(p => `<td>${celula(c, p, estado.contas[p])}</td>`).join("")}`;
+// A API de caixa de entrada do TikTok não recebe texto: a legenda vai pelo "Copiar legenda".
+const legendaTikTok = c => `${c.titulo}\n\n${(c.hashtags || []).map(h => "#" + h).join(" ")}`.trim();
+document.addEventListener("click", async ev => {
+  const b = ev.target.closest("[data-copiar]");
+  if (!b) return;
+  try { await navigator.clipboard.writeText(b.dataset.copiar); avisar("Legenda copiada. Cole no TikTok ao publicar."); }
+  catch (err) { avisar("Não consegui copiar: selecione o título do corte e copie à mão.", true); }
+});
 
 // ---------- canais ----------
 const linhaCanal = c => `<div class="linha"><div><h3>${e(c.nome || c.id)}</h3>
-    <a class="sub" href="https://www.youtube.com/channel/${e(c.id)}" target="_blank" rel="noopener">abrir canal</a></div><span class="espaco"></span>
+    <a class="sub" href="${String(c.id).startsWith("twitch:") ? `https://www.twitch.tv/${e(String(c.id).slice(7))}` : `https://www.youtube.com/channel/${e(c.id)}`}" target="_blank" rel="noopener">abrir canal${String(c.id).startsWith("twitch:") ? " (Twitch)" : ""}</a></div><span class="espaco"></span>
     <label class="chave verde"><input type="checkbox" data-seguir="${e(c.id)}" ${c.seguir ? "checked" : ""}> Acompanhar automaticamente</label>
     <button class="btn mini perigo" data-acao="canal/remover" data-id="${e(c.id)}" data-confirmar="Remover este canal da lista?">Remover</button></div>
   <details ${c.valor_mil || c.texto_obrigatorio || c.autorizacao ? "open" : ""}><summary>Campanha paga e autorização</summary>
@@ -521,14 +823,29 @@ function passo(n, feito, titulo, resumo, corpo, aberto) {
 }
 function desenharConfig() {
   const a = ajustes, yt = a.youtube;
-  const primeiro = !a.ia ? 1 : !yt.conectado ? 2 : !a.instagram ? 3 : !a.tem_cortes ? 4 : 0;
+  const tt = a.tiktok;
+  const primeiro = !a.ia ? 1 : !yt.conectado ? 2 : !a.instagram ? 3 : !a.tem_cortes ? 5 : 0;
   const passos = `<div class="cartao secao-config"><h2>Primeiros passos</h2>
     <div class="sub" style="margin-bottom:6px">Faça na ordem. O sistema já funciona em modo teste depois do passo 1.</div>
     ${passo(1, a.ia, "Ligar a inteligência artificial", "É ela que escolhe os melhores trechos e escreve gancho e título.", `
+      <div class="sub">Escolha um provedor. Em uso agora: <b>${a.provedor === "nvidia" ? "NVIDIA (gratuito)" : "Claude (pago)"}</b> — troque em “Provedor da IA”, na seção Inteligência artificial abaixo, e clique em Salvar configurações.</div>
+      <b>Opção A — Claude (pago, melhor qualidade)</b>
       <ol><li>Abra <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> e crie uma conta.</li>
       <li>Em “API Keys”, clique em “Create Key” e copie a chave (começa com sk-ant-).</li>
       <li>Adicione créditos em “Billing”. Cada vídeo analisado custa centavos.</li>
-      <li>Cole a chave abaixo e clique em Salvar.</li></ol>${campoChave("ANTHROPIC_API_KEY", "sk-ant-…")}`, primeiro === 1)}
+      <li>Cole a chave abaixo e clique em Salvar.</li></ol>${campoChave("ANTHROPIC_API_KEY", "sk-ant-…")}
+      <b style="display:block;margin-top:12px">Opção B — NVIDIA (gratuito, para testes)</b>
+      <ol><li>Abra <a href="https://build.nvidia.com/" target="_blank" rel="noopener">build.nvidia.com</a> e entre com uma conta NVIDIA Developer (gratuita, sem cartão).</li>
+      <li>No seu perfil, em “API Keys”, gere uma chave (começa com nvapi-).</li>
+      <li>Cole a chave abaixo e clique em Salvar.</li>
+      <li>Em “Provedor da IA”, escolha <b>NVIDIA Build</b> e clique em Salvar configurações.</li></ol>${campoChave("NVIDIA_API_KEY", "nvapi-…")}
+      <div class="sub" style="margin-top:8px">A NVIDIA limita a cerca de 40 pedidos por minuto e indica o acesso gratuito para testes, não para uso contínuo.</div>
+      <button class="btn mini" id="testar-ia" style="margin-top:10px">Testar IA</button>
+      <b style="display:block;margin-top:14px">IA reserva — Claude Code (se a principal cair)</b>
+      <div class="sub">${a.reserva ? "Claude Code encontrado neste computador." : "Claude Code não encontrado: instale em claude.com/code para ter a reserva."} Usa a sua conta Claude e gasta o limite do plano, não créditos. Para não depender do login do navegador (que expira), gere um token fixo, que vale 1 ano: num terminal, rode <b>claude setup-token</b> e cole abaixo (pode ser o mesmo usado no J.A.R.V.I.S).</div>
+      ${campoChave("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat…")}
+      <button class="btn mini" id="testar-reserva" style="margin-top:8px">Testar reserva</button>
+      <div class="sub" style="margin-top:8px">Último recurso: a IA local (Ollama) só confere os trechos escolhidos pelas métricas. Configure em “IA local”, abaixo.</div>`, primeiro === 1)}
     ${passo(2, yt.conectado, "Conectar o canal do YouTube", "Para os cortes serem enviados como Shorts.", `
       <ol><li>Abra <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console.cloud.google.com</a> e crie um projeto.</li>
       <li>Em “APIs e serviços” → “Biblioteca”, ative a <b>YouTube Data API v3</b>.</li>
@@ -547,13 +864,23 @@ function desenharConfig() {
       <li>Copie o ID da conta do Instagram e o token e cole abaixo.</li></ol>
       ${campoChave("IG_USER_ID", "ID numérico da conta")}${campoChave("IG_ACCESS_TOKEN", "Token de longa duração")}
       <div class="sub" style="margin-top:8px">O token de longa duração vale cerca de 60 dias; quando vencer, as publicações falham e é só colar um novo aqui.</div>`, primeiro === 3)}
-    ${passo(4, a.tem_cortes, "Fazer o primeiro teste", "Veja o que o sistema cortaria, sem publicar nada.", `
+    ${passo(4, tt.conectado, "Conectar o TikTok (opcional)", "Os cortes chegam às notificações do app do TikTok e você publica de lá.", `
+      <ol><li>Entre em <a href="https://developers.tiktok.com/" target="_blank" rel="noopener">developers.tiktok.com</a> com a conta que vai receber os cortes e, em <b>Manage apps</b>, crie um app (ícone, categoria, descrição e links de site, termos e privacidade).</li>
+      <li>Adicione os produtos <b>Login Kit</b> e <b>Content Posting API</b>; no Content Posting, marque o escopo <b>video.upload</b>.</li>
+      <li>No Login Kit, plataforma <b>Desktop</b>, cadastre este endereço de retorno: <code>${e(tt.retorno)}</code></li>
+      <li>Deixe o app em <b>Sandbox</b> e adicione a sua conta do TikTok como usuária de teste (Sandbox → Target users).</li>
+      <li>Copie o <b>Client Key</b> e o <b>Client Secret</b> e cole abaixo.</li>
+      <li>Clique em “Conectar o TikTok” e autorize com a conta de destino.</li></ol>
+      ${campoChave("TIKTOK_CLIENT_KEY", "Client Key")}${campoChave("TIKTOK_CLIENT_SECRET", "Client Secret")}
+      <div class="linha" style="margin-top:8px"><button class="btn mini principal" id="conectar-tt" ${tt.tem_chaves ? "" : "disabled"}>Conectar o TikTok</button></div>
+      <div class="sub" style="margin-top:8px">O TikTok aceita no máximo 5 envios pendentes em 24 h por conta. A legenda é escrita no app: na aba Publicações há um botão “Copiar legenda” para cada corte enviado.</div>`, false)}
+    ${passo(5, a.tem_cortes, "Fazer o primeiro teste", "Veja o que o sistema cortaria, sem publicar nada.", `
       <ol><li>Ligue a chave <b>Modo teste</b> no topo da página.</li>
       <li>Cole o link de um vídeo de um canal que você pretende cortar e clique em Enviar.</li>
       <li>Acompanhe na aba Análises. Ao terminar, “Ver análise” mostra cada trecho considerado e por quê.</li>
       <li>Assista aos cortes na aba Cortes. Gostou de um? “Aprovar e publicar”.</li>
-      <li>Se vieram cortes demais ou fracos, suba a “Nota mínima”; se vieram de menos, baixe.</li></ol>`, primeiro === 4)}
-    <div class="sub" style="margin-top:10px">Recursos opcionais: enquadramento que segue rostos ${a.rostos ? "✓ instalado" : "— instale com <code>pip install \"opencv-python-headless&lt;5\"</code>"} · legendas automáticas ${a.whisper ? "✓ instaladas" : "— instale com <code>pip install faster-whisper</code>"} · chat de lives — <code>pip install chat-downloader</code> · narração ${a.voz.instalada && a.voz.arquivo ? "✓ voz instalada" : a.voz.estado === "rodando" ? "— " + e(a.voz.mensagem) : `— <button class="btn mini" id="instalar-voz">Instalar a voz agora</button>`}${a.voz.estado === "erro" ? `<div class="msg-erro">${e(a.voz.mensagem)}</div>` : ""}.</div>
+      <li>Se vieram cortes demais ou fracos, suba a “Nota mínima”; se vieram de menos, baixe.</li></ol>`, primeiro === 5)}
+    <div class="sub" style="margin-top:10px">Recursos opcionais: enquadramento que segue rostos ${a.rostos ? "✓ instalado" : "— instale com <code>pip install \"opencv-python-headless&lt;5\"</code>"} · legendas automáticas ${a.whisper ? "✓ instaladas" : "— instale com <code>pip install faster-whisper</code>"} · narração ${a.voz.instalada && a.voz.arquivo ? "✓ voz instalada" : a.voz.estado === "rodando" ? "— " + e(a.voz.mensagem) : `— <button class="btn mini" id="instalar-voz">Instalar a voz agora</button>`}${a.voz.estado === "erro" ? `<div class="msg-erro">${e(a.voz.mensagem)}</div>` : ""}.</div>
   </div>`;
   const secoes = a.secoes.map(s => `<div class="cartao secao-config"><h2>${e(s.titulo)}</h2><div class="sub" style="margin-bottom:6px">${e(s.descricao)}</div>
     ${s.campos.map(c => `<div class="campo"><label>${e(c.rotulo)}</label><div class="sub">${e(c.ajuda)}</div><div class="entrada">${entrada(c)}</div></div>`).join("")}</div>`).join("");
@@ -574,16 +901,28 @@ document.addEventListener("click", async ev => {
   const t = ev.target;
   if (t.id === "salvar-config") {
     const valores = {};
-    document.querySelectorAll("[data-campo]").forEach(el => valores[el.dataset.campo] = el.type === "checkbox" ? el.checked : el.value);
+    // Só os campos desta aba: os atalhos de ajuste dos cortes também usam data-campo ("ini"/"fim").
+    document.querySelectorAll("#config [data-campo]").forEach(el => valores[el.dataset.campo] = el.type === "checkbox" ? el.checked : el.value);
     acaoConfig("ajustes/salvar", {valores}, "Configurações salvas.");
   } else if (t.dataset.salvarChave) {
     const campo = document.querySelector(`[data-chave="${t.dataset.salvarChave}"]`);
     acaoConfig("chave", {nome: t.dataset.salvarChave, valor: campo.value}, "Chave salva.");
   } else if (t.id === "salvar-segredo") {
     acaoConfig("youtube/segredo", {conteudo: $("#segredo-yt").value}, "Arquivo salvo. Agora clique em Conectar canal.");
-  } else if (t.id === "conectar-yt") {
+  } else if (t.id === "testar-ia" || t.id === "testar-reserva") {
+    if (t.disabled) return;
+    t.disabled = true; const rotulo = t.textContent; t.textContent = "Testando…";
     try {
-      const r = await fetch("/api/youtube/conectar", {method: "POST", body: "{}", headers: {"X-Painel": "1"}});
+      const rota = t.id === "testar-ia" ? "/api/ia/testar" : "/api/ia/testar_reserva";
+      const r = await fetch(rota, {method: "POST", body: "{}", headers: {"Content-Type": "application/json", "X-Painel": "1"}});
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.erro || "A IA não respondeu.");
+      avisar(j.mensagem);
+    } catch (err) { avisar(err.message, true); }
+    finally { t.disabled = false; t.textContent = rotulo; }
+  } else if (t.id === "conectar-yt" || t.id === "conectar-tt") {
+    try {
+      const r = await fetch(t.id === "conectar-yt" ? "/api/youtube/conectar" : "/api/tiktok/conectar", {method: "POST", body: "{}", headers: {"X-Painel": "1"}});
       const j = await r.json();
       if (!r.ok) throw new Error(j.erro);
       window.open(j.url, "_blank", "noopener");
@@ -610,12 +949,12 @@ function desenhar() {
   const vivas = s.lives.filter(l => l.status === "acompanhando" || l.status === "conectando").length;
   const andando = s.tarefas.filter(t => !["feito", "erro"].includes(t.status)).length;
   const nCortes = s.grupos.reduce((n, g) => n + g.cortes.length, 0);
-  const naFila = s.fila.filter(c => c.yt.situacao === "na fila" || c.ig.situacao === "na fila").length;
+  const naFila = s.fila.filter(c => PLATS.some(p => c[p].situacao === "na fila")).length;
   $("#n-lives").textContent = vivas; $("#n-lives").classList.toggle("viva", vivas > 0);
   $("#n-analises").textContent = andando; $("#n-analises").classList.toggle("viva", andando > 0);
   $("#n-cortes").textContent = nCortes; $("#n-fila").textContent = naFila; $("#n-canais").textContent = s.canais.length;
 
-  const selos = `<span class="selo ${s.ia ? "ok" : "alerta"}" title="${s.ia ? "" : "Defina ANTHROPIC_API_KEY no .env"}">IA ${s.ia ? "ligada" : "desligada"}</span>
+  const selos = `<span class="selo ${s.ia ? "ok" : "alerta"}" title="${s.ia ? "" : "Cole a chave da IA (Claude ou NVIDIA) na aba Configurações"}">IA ${s.ia ? "ligada" : "desligada"}</span>
     <span class="selo ${s.whisper ? "ok" : ""}" title="${s.whisper ? "" : "Instale faster-whisper para legendar vídeos sem legenda e lives"}">Legendas ${s.whisper ? "automáticas" : "só do YouTube"}</span>
     <span class="selo ${s.rostos ? "ok" : ""}" title="${s.rostos ? "O corte segue os rostos da cena" : "Instale opencv-python-headless para o corte seguir os rostos"}">Enquadramento ${s.rostos ? "inteligente" : "simples"}</span>
     ${s.aprendendo ? '<span class="selo ok" title="A IA recebe os cortes mais e menos vistos do canal como referência">Aprendendo com o canal</span>' : ""}
@@ -626,19 +965,35 @@ function desenhar() {
   if (!s.lives.length) { lives._vazio || (lives.innerHTML = vazio("Nenhuma live sendo acompanhada", "Cole o link de uma live acima. Você pode acompanhar várias ao mesmo tempo."), lives._vazio = true); }
   else { if (lives._vazio) { lives.innerHTML = ""; lives._vazio = false; } sincronizar(lives, s.lives, l => l.id, cartaoLive, "cartao"); }
 
-  const an = $("#lista-analises");
-  if (!s.tarefas.length) { an._vazio || (an.innerHTML = vazio("Nenhum vídeo em análise", "Cole o link de um vídeo gravado acima. Com o modo teste ligado, você vê o que seria cortado sem publicar nada."), an._vazio = true); }
-  else { if (an._vazio) { an.innerHTML = ""; an._vazio = false; } sincronizar(an, s.tarefas, t => t.id, cartaoTarefa, "cartao"); }
+  const nErros = s.tarefas.filter(t => t.status === "erro").length;
+  const topo = nErros > 1 ? `<div class="linha" style="margin-bottom:14px"><span class="sub">${nErros} análises com erro</span><span class="espaco"></span>
+    <button class="btn mini" data-acao="tarefa/tentar_todas" aria-label="Tentar de novo todas as análises com erro">↻ Tentar todos</button></div>` : "";
+  if ($("#topo-analises")._html !== topo) { $("#topo-analises").innerHTML = topo; $("#topo-analises")._html = topo; }
+  const an = $("#lista-analises"), todas = [...s.tarefas, ...(s.anteriores || [])];
+  if (!todas.length) { an._vazio || (an.innerHTML = vazio("Nenhum vídeo em análise", "Cole o link de um vídeo gravado acima. Com o modo teste ligado, você vê o que seria cortado sem publicar nada."), an._vazio = true); }
+  else { if (an._vazio) { an.innerHTML = ""; an._vazio = false; } sincronizar(an, todas, t => t.id, t => t.anterior ? cartaoAnterior(t) : cartaoTarefa(t), "cartao"); }
 
   const co = $("#lista-cortes");
-  if (!s.grupos.length) { co._vazio || (co.innerHTML = vazio("Nenhum corte ainda", "Os cortes aparecem aqui, agrupados pelo vídeo ou pela live de origem."), co._vazio = true); }
-  else { if (co._vazio) { co.innerHTML = ""; co._vazio = false; } sincronizar(co, s.grupos, g => g.video_id, grupoCortes, "grupo"); }
+  const filtrados = ordemDosGrupos(s.grupos).map(g => ({...g, cortes: g.cortes.filter(passaFiltro)})).filter(g => g.cortes.length);
+  const total = s.grupos.reduce((n, g) => n + g.cortes.length, 0), vistos = filtrados.reduce((n, g) => n + g.cortes.length, 0);
+  $("#contagem-cortes").textContent = total ? (vistos === total ? `${total} ${total === 1 ? "corte" : "cortes"}` : `${vistos} de ${total} cortes`) : "";
+  const msgVazio = !s.grupos.length ? vazio("Nenhum corte ainda", "Os cortes aparecem aqui, agrupados pelo vídeo ou pela live de origem.")
+    : !filtrados.length ? vazio("Nenhum corte com esse filtro", "Mude o período ou a situação acima.") : "";
+  if (msgVazio) { if (co._vazio !== msgVazio) { co.innerHTML = msgVazio; co._vazio = msgVazio; } }
+  else { if (co._vazio) { co.innerHTML = ""; co._vazio = ""; } sincronizarGrupos(co, filtrados); }
 
-  const contas = cartaoConta("yt", "YouTube", s.contas.yt) + cartaoConta("ig", "Instagram", s.contas.ig);
+  const contas = PLATS.map(p => cartaoConta(p, NOME_PLAT[p], s.contas[p])).join("");
   if ($("#contas")._html !== contas) { $("#contas").innerHTML = contas; $("#contas")._html = contas; }
-  sincronizar($("#fila"), s.fila, c => c.id, linhaFila);
-  $("#fila-vazia").innerHTML = s.fila.length ? `<div class="sub" style="margin-top:10px">${s.publicacao_auto ? `Cortes de live são publicados na hora; os de vídeo gravado, um a cada ${s.intervalo_min} min.` : "Publicação automática pausada: use os botões para publicar um a um."}</div>`
-    : `<div class="sub" style="padding:24px;text-align:center">Nada para publicar. Cortes em modo teste só entram aqui depois de aprovados.</div>`;
+  const sits = c => PLATS.map(p => c[p].situacao);
+  const mostrar = {
+    fila: c => sits(c).some(x => ["na fila", "enviando"].includes(x)),
+    aguardando: c => sits(c).includes("aguardando"), falhou: c => sits(c).includes("falhou"),
+    publicados: c => sits(c).includes("publicado"), tudo: () => true}[filtroFila] || (() => true);
+  const linhas = s.fila.filter(mostrar);
+  $("#contagem-fila").textContent = `${linhas.length} de ${s.fila.length}`;
+  sincronizar($("#fila"), linhas, c => c.id, linhaFila);
+  $("#fila-vazia").innerHTML = linhas.length ? `<div class="sub" style="margin-top:10px">${s.publicacao_auto ? `Na fila, os cortes de live saem na hora; os de vídeo gravado, um a cada ${s.intervalo_min} min. Nada entra na fila sem você escolher.` : "Publicação automática pausada: use os botões para publicar um a um."}</div>`
+    : `<div class="sub" style="padding:24px;text-align:center">Nada aqui com esse filtro.</div>`;
 
   const ca = $("#lista-canais");
   if (!s.canais.length) { ca._vazio || (ca.innerHTML = vazio("Nenhum canal confiável ainda", "Todo link que você envia marca o canal como confiável. Depois, ligue o acompanhamento para cortar as lives e os vídeos novos dele sozinho."), ca._vazio = true); }
@@ -684,6 +1039,46 @@ $("#form-envio").addEventListener("submit", async ev => {
 });
 
 document.addEventListener("click", async ev => {
+  const decisao = ev.target.closest("[data-decisao]");
+  if (decisao) {  // Publicar agora / Colocar na fila, nas plataformas marcadas
+    const id = Number(decisao.dataset.id);
+    const plats = [...(marcadas.get(id) || [])];
+    if (!plats.length) return avisar("Marque pelo menos uma plataforma.", true);
+    const modo = decisao.dataset.decisao;
+    if (await acao("corte/decidir", {id, modo, plataformas: plats.join(",")},
+        modo === "agora" ? "Publicação iniciada. Acompanhe na aba Publicações." : "Corte colocado na fila."))
+      { decidindo.delete(id); marcadas.delete(id); }
+    return;
+  }
+  const decidir = ev.target.closest("[data-decidir]");
+  if (decidir) {
+    const id = Number(decidir.dataset.decidir);
+    decidindo.has(id) ? decidindo.delete(id) : decidindo.add(id);
+    return desenhar();
+  }
+  const previa = ev.target.closest("[data-previa]");
+  if (previa) {
+    const chave = previa.dataset.previa;
+    previas.has(chave) ? previas.delete(chave) : previas.add(chave);
+    return desenhar();
+  }
+  const atalho = ev.target.closest("[data-atalho]");
+  if (atalho) {  // soma os segundos ao campo e refaz direto
+    const id = atalho.dataset.atalho, campo = atalho.dataset.campo;
+    const ini = document.querySelector(`[data-ajuste-ini="${id}"]`), fim = document.querySelector(`[data-ajuste-fim="${id}"]`);
+    (campo === "ini" ? ini : fim).value = Number((campo === "ini" ? ini : fim).value || 0) + Number(atalho.dataset.seg);
+    return acao("corte/refazer", {id, inicio: ini.value, fim: fim.value}, "Refazendo o corte. Leva cerca de um minuto.");
+  }
+  const refazer = ev.target.closest("[data-refazer]");
+  if (refazer) {
+    if (refazer.disabled) return;
+    refazer.disabled = true;
+    const id = refazer.dataset.refazer;
+    await acao("corte/refazer", {id, inicio: document.querySelector(`[data-ajuste-ini="${id}"]`).value,
+      fim: document.querySelector(`[data-ajuste-fim="${id}"]`).value}, "Refazendo o corte. Leva cerca de um minuto.");
+    refazer.disabled = false;
+    return;
+  }
   const b = ev.target.closest("[data-acao],[data-analise],[data-ir]");
   if (!b) return;
   if (b.dataset.ir) return abrirAba(b.dataset.ir);
@@ -703,7 +1098,9 @@ document.addEventListener("click", async ev => {
   if (b.dataset.confirmar && !confirm(b.dataset.confirmar)) return;
   const {acao: nome, ok, ...dados} = b.dataset;
   delete dados.confirmar;
-  acao(nome, dados, ok);
+  if (b.disabled) return;  // trava de clique duplo: espera a resposta da ação
+  if (b.tagName === "BUTTON") b.disabled = true;
+  acao(nome, dados, ok).finally(() => { b.disabled = false; });
 });
 document.addEventListener("change", ev => {
   if (ev.target.id === "auto") acao("publicacao_auto", {ligada: ev.target.checked}, ev.target.checked ? "Publicação automática ligada." : "Publicação automática pausada.");
@@ -713,6 +1110,8 @@ document.addEventListener("change", ev => {
 let inicial = "lives";
 try { inicial = localStorage.getItem("aba") || inicial; } catch (err) {}
 abrirAba(inicial);
+aplicarFiltroNaTela();
+$("#filtro-fila").value = filtroFila;
 atualizar();
 setInterval(atualizar, 2000);
 </script>

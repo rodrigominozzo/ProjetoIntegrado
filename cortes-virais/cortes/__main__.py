@@ -3,13 +3,24 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import sys
 import threading
 import time
 from pathlib import Path
 
-from . import config, desempenho, fontes, publicar, vod
-from .banco import Banco
-from .live import MonitorLive
+# Sem console (pythonw), o Python começa sem stdout/stderr e algumas bibliotecas os criam
+# depois, por conta própria. Se isso acontece enquanto o yt-dlp está montando a saída dele
+# (ex.: as lives retomadas ao abrir o programa), ele quebra com "KeyError: None". Com as
+# saídas já definidas desde o início, nada muda no meio do caminho.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+
+from . import config, desempenho, fontes, publicar, vod  # noqa: E402
+from .banco import Banco  # noqa: E402
+from .live import MonitorLive  # noqa: E402
 
 log = logging.getLogger("cortes")
 

@@ -9,6 +9,11 @@ fontes:
   # ele busca no YouTube inteiro pelas lives/vídeos com mais exibições.
   exigir_autorizacao: true
   duracao_max_h: 6
+  # Vídeos com restrição de idade: cookies de um navegador logado no YouTube
+  # (firefox | chrome | edge | brave | opera | vivaldi) ou um arquivo cookies.txt.
+  # No Windows, o Firefox é o que funciona: o Chrome e o Edge travam e criptografam os cookies.
+  cookies_navegador: ""
+  cookies_arquivo: ""
   busca:
     consultas: ["live"]
     regiao: BR
@@ -54,6 +59,12 @@ ia:
     triagem: claude-haiku-5-5    # peneira rápida, só texto
     ao_vivo: claude-sonnet-5-5   # avaliação de picos durante a live
     final: claude-opus-5-5       # julgamento final, gancho e direção de edição
+  provedor: anthropic    # anthropic (Claude, pago) | nvidia (NVIDIA Build, gratuito para testes)
+  nvidia:                # modelos usados quando provedor: nvidia (chave NVIDIA_API_KEY)
+    modelos:
+      triagem: google/gemma-4-31b-it
+      ao_vivo: google/gemma-4-31b-it
+      final: google/gemma-4-31b-it
 
 live:
   limiar: 4.0            # menor = mais cortes (e mais falsos positivos)
@@ -66,13 +77,21 @@ publicar:
   creditar_fonte: true
   intervalo_min: 30      # espaçamento entre posts de vídeos gravados (lives publicam na hora)
   horarios: ""           # janelas para esses posts, ex.: "11:00-14:00, 18:00-23:30"
+  auto_acima: 88         # nota acima disto entra sozinha na fila (nas plataformas com automatico)
   youtube:
     ativo: true
     privacidade: public  # public | unlisted | private
     max_por_dia: 6
+    automatico: false    # nunca publica sozinho: todo corte espera você
   instagram:
     ativo: true
     max_por_dia: 20
+    automatico: true
+    auto_live_acima: 78  # corte de live com nota acima disto vai sozinho
+  tiktok:                # envia para a caixa de entrada (rascunhos) do app do TikTok
+    ativo: false
+    max_por_dia: 5       # o TikTok aceita até 5 envios pendentes por 24 h
+    automatico: false
 
 auto:
   intervalo_min: 30      # a cada quanto tempo procurar lives e vídeos novos

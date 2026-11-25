@@ -34,7 +34,11 @@ $atalho = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath("Deskto
 $atalho.TargetPath       = Join-Path $destino "Cortes Virais.bat"
 $atalho.WorkingDirectory = $destino
 $atalho.WindowStyle      = 7
+$icone = Join-Path $destino "cortes-virais.ico"
+if (Test-Path $icone) { $atalho.IconLocation = "$icone,0" }
 $atalho.Save()
+# O mesmo atalho no Menu Iniciar: acha-se digitando "Cortes" depois de apertar a tecla Windows.
+Copy-Item $atalho.FullName (Join-Path ([Environment]::GetFolderPath("Programs")) "Cortes Virais.lnk") -Force
 Remove-Item $zip -Force -ErrorAction SilentlyContinue
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 

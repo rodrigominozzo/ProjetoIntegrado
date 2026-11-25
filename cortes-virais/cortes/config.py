@@ -16,6 +16,10 @@ PADRAO = {
         "canais_autorizados": [],
         "exigir_autorizacao": True,
         "duracao_max_h": 6,
+        # Vídeos com restrição de idade: cookies de um navegador logado no YouTube
+        # (firefox | chrome | edge | brave | opera | vivaldi) ou de um arquivo cookies.txt.
+        "cookies_navegador": "",
+        "cookies_arquivo": "",
         "busca": {"consultas": ["live"], "regiao": "BR", "max_resultados": 10, "dias": 2},
     },
     "cortes": {
@@ -33,6 +37,8 @@ PADRAO = {
         "capa": True,             # gera thumbnail e envia junto com o vídeo
         "gancho": True,           # frase de impacto fixa no topo do vídeo
         "marca": "@GamePlayCortesBR",  # nome do canal, discreto no canto do vídeo
+        "fechar_frases": True,    # estende o corte até a fala terminar, em vez de cortar no meio
+        "extensao_max": 40,       # segundos que o corte pode crescer para fechar o raciocínio
         "altura_max": 1080,
         "apagar_fonte": True,
     },
@@ -46,6 +52,19 @@ PADRAO = {
         # Um modelo para cada papel: o mais rápido peneira, o mais capaz decide.
         "modelos": {"triagem": "claude-haiku-5-5", "ao_vivo": "claude-sonnet-5-5",
                     "final": "claude-opus-5-5"},
+        "provedor": "anthropic",  # anthropic (Claude, pago) | nvidia (NVIDIA Build, grátis p/ testes)
+        # Se a IA principal cair: o Claude Code deste computador, com a sua conta (como no Jarvis)
+        "reserva": "claude_code",  # claude_code | nenhuma
+        "reserva_modelo": "claude-sonnet-5-5",
+        # Último recurso, sem nuvem: IA local (Ollama). Mais fraca: só valida os trechos que as
+        # métricas escolheram. Modelo vazio = o melhor instalado.
+        "local": "ollama",  # ollama | nenhuma
+        "local_modelo": "",
+        # Modelos abertos da NVIDIA; os que veem imagens avaliam melhor os quadros do vídeo.
+        # (O Nemotron VL pensa demais e estoura a resposta, e recusa imagens de jogos violentos.)
+        "nvidia": {"modelos": {"triagem": "google/gemma-4-31b-it",
+                               "ao_vivo": "google/gemma-4-31b-it",
+                               "final": "google/gemma-4-31b-it"}},
     },
     "edicao": {
         "dinamica": True,          # troca de plano e zoom ao longo do corte
@@ -73,6 +92,10 @@ PADRAO = {
     "conhecimento": {"pasta": "conhecimento"},
     "live": {
         "limiar": 4.0,
+        "palavras_limiar_menor": "GTA",  # lives com estas palavras no título cortam mais fácil
+        "limiar_menor": 3.0,
+        "historico": True,       # também analisa o que a live já tinha passado ao começar
+        "historico_horas": 6,
         "min_mensagens": 8,
         "pre": 22,
         "pos": 8,
@@ -83,17 +106,27 @@ PADRAO = {
     },
     "publicar": {
         "creditar_fonte": True,
+        "manual": True,       # cortes novos esperam você decidir: publicar agora ou pôr na fila
+        "auto_acima": 88,     # ...menos os de nota acima disto: entram sozinhos na fila (0 = nunca)
+        "imediato_acima": 90, # e acima disto publicam já, sem esperar intervalo/horário (0 = nunca)
         "intervalo_min": 30,  # espaçamento entre posts de vídeos gravados
         "horarios": "",       # janelas para posts não urgentes, ex.: "11:00-14:00, 18:00-23:30"
         "youtube": {
             "ativo": True,
+            "automatico": False,  # nunca publica sozinho: todo corte espera você avaliar
             "privacidade": "public",
             "categoria": "24",
             "max_por_dia": 6,
             "client_secret": "client_secret.json",
             "token": "youtube_token.json",
         },
-        "instagram": {"ativo": True, "max_por_dia": 20, "versao_api": "v21.0"},
+        "instagram": {"ativo": True, "max_por_dia": 20, "versao_api": "v21.0",
+                      "automatico": True,
+                      "auto_live_acima": 78},  # corte de live com nota acima disto vai sozinho
+        # Vai para a caixa de entrada do app do TikTok (você publica de lá). O TikTok aceita
+        # no máximo 5 envios pendentes em 24 h por conta.
+        "tiktok": {"ativo": True, "max_por_dia": 5, "token": "tiktok_token.json",
+                   "automatico": False},
     },
     "auto": {"intervalo_min": 30},
     "monetizacao": {"moeda": "US$"},
@@ -128,4 +161,7 @@ def carregar(caminho: str | Path | None = "config.yaml") -> dict:
         _mesclar(cfg, yaml.safe_load(Path(caminho).read_text(encoding="utf-8")) or {})
     carregar_env()
     Path(cfg["pasta_trabalho"]).mkdir(parents=True, exist_ok=True)
+    from . import fontes  # cookies para vídeos com restrição de idade
+
+    fontes.configurar(cfg)
     return cfg

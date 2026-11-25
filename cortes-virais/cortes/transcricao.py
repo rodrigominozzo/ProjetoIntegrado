@@ -108,6 +108,62 @@ def ajustar_bordas(palavras: list[Palavra], inicio: float, fim: float,
     return max(0.0, perto(inicio, pausas)), perto(fim, fins)
 
 
+_FIM_DE_FRASE = re.compile(r"[.!?…]['\")\]]*$")
+
+
+def fechar_fala(palavras: list[Palavra], inicio: float, fim: float, extra_fim: float = 15.0,
+                extra_inicio: float = 6.0) -> tuple[float, float]:
+    """Leva as bordas do corte para onde a fala realmente para, para não interromper uma
+    frase nem uma linha de raciocínio. Prefere alongar o corte (até extra_fim segundos no
+    fim e extra_inicio no começo) a cortar alguém no meio do que está dizendo.
+
+    Ponto de parada forte: fim de frase (pontuação) ou pausa longa. Fraco: pausa curta.
+    Legendas automáticas do YouTube não têm pontuação, então as pausas contam mais."""
+    ps = sorted(p for p in palavras if p[1] >= p[0])
+    if not ps:
+        return inicio, fim
+
+    def pausa_depois(i: int) -> float:
+        return ps[i + 1][0] - ps[i][1] if i + 1 < len(ps) else 99.0
+
+    def parada(i: int, forte: bool) -> bool:
+        if _FIM_DE_FRASE.search(ps[i][2]):
+            return True
+        return pausa_depois(i) >= (0.9 if forte else 0.45)
+
+    # --- fim: a última palavra antes do corte já encerra a fala? se não, segue até encerrar
+    antes = [i for i, p in enumerate(ps) if p[0] < fim]
+    novo_fim = fim
+    if antes:
+        i0 = antes[-1]
+        ja_parou = ps[i0][1] <= fim + 0.05 and parada(i0, forte=False)
+        if not ja_parou:
+            limite = fim + extra_fim
+            alcance = [i for i in range(i0, len(ps)) if ps[i][1] <= limite]
+            escolhido = next((i for i in alcance if parada(i, forte=True)), None)
+            if escolhido is None:
+                escolhido = next((i for i in alcance if parada(i, forte=False)), None)
+            if escolhido is None and alcance:  # sem pausa clara: a maior que houver no alcance
+                escolhido = max(alcance, key=pausa_depois)
+            if escolhido is not None:
+                novo_fim = max(fim, ps[escolhido][1] + 0.3)
+
+    # --- início: se começa no meio de uma frase, volta até o começo dela
+    novo_inicio = inicio
+    anteriores = [i for i, p in enumerate(ps) if p[0] < inicio]
+    if anteriores:
+        j = anteriores[-1]
+        colado = ps[j][1] > inicio - 0.45 and not parada(j, forte=False)
+        if colado:
+            for k in range(j, -1, -1):
+                if ps[k][0] < inicio - extra_inicio:
+                    break
+                if k == 0 or parada(k - 1, forte=False):
+                    novo_inicio = min(inicio, ps[k][0] - 0.2)
+                    break
+    return max(0.0, novo_inicio), novo_fim
+
+
 # --- legendas queimadas (ASS) ---------------------------------------------
 
 def _tempo(t: float) -> str:
