@@ -73,6 +73,19 @@ def _inicio_do_arquivo(arquivo: Path) -> float | None:
         return None
 
 
+def explicar_falha(e: BaseException) -> str:
+    """Frase curta para o cartão da live, sem o comando inteiro do ffmpeg."""
+    if isinstance(e, OSError) and getattr(e, "winerror", None) == 1455:
+        return ("o Windows ficou sem memória (arquivo de paginação pequeno). Feche programas "
+                "pesados ou aumente a memória virtual do Windows.")
+    if isinstance(e, subprocess.CalledProcessError):
+        codigo = e.returncode & 0xFFFFFFFF if isinstance(e.returncode, int) else e.returncode
+        memoria = " (provável falta de memória)" if codigo in (0xDFABA7BB, 0xC0000017, 0xC000012D) else ""
+        programa = Path(str((e.cmd or ["?"])[0])).stem
+        return f"o {programa} falhou ao montar o corte (código {codigo:#x}){memoria}."
+    return str(e)[:300]
+
+
 class MonitorLive:
     def __init__(self, url: str, cfg: dict, banco: Banco, *, meta: dict | None = None,
                  entrada_ffmpeg: list[str] | None = None, chat=None, detector=None):
@@ -227,9 +240,17 @@ class MonitorLive:
     def _medir_volume(self, completos: list[tuple[float, Path]]) -> float | None:
         for _, arq in completos:
             if arq.name not in self._volume:
-                v = sinais.volume_por_segundo(arq)
+                try:
+                    v = sinais.volume_por_segundo(arq)
+                except (OSError, subprocess.SubprocessError) as e:
+                    # Ex.: WinError 1455 (memória do Windows esgotada, 25/11/2026). Antes isto
+                    # derrubava o acompanhamento da live inteira; agora só pula esta medida.
+                    log.warning("Live %s: não consegui medir o volume (%s); sigo sem essa medida.",
+                                self.meta["id"], explicar_falha(e))
+                    continue
                 self._volume[arq.name] = float(np.mean(v)) if len(v) else -90.0
-        return self._volume[completos[-1][1].name] if completos else None
+        validos = [arq.name for _, arq in completos if arq.name in self._volume]
+        return self._volume[validos[-1]] if validos else None
 
     # --- recorte ---
     def _recortar(self, pedido: dict, midia: list[tuple[Path, float, float]]) -> None:
@@ -297,7 +318,7 @@ class MonitorLive:
             publicar.publicar_pendentes(cfg, self.banco)
         except Exception as e:  # noqa: BLE001
             log.exception("Falha ao produzir corte da live")
-            pedido["pico"]["resultado"] = f"Erro: {e}"
+            pedido["pico"]["resultado"] = f"Erro: {explicar_falha(e)}"
         finally:
             Path(pedido["bruto"]).unlink(missing_ok=True)
 
@@ -363,7 +384,13 @@ class MonitorLive:
                            if encerrou or p["geracao"] != self._geracao or p["mb"] <= gravado]
                 for p in prontos:
                     self._agendados.remove(p)
-                    self._recortar(p, midia)
+                    try:
+                        self._recortar(p, midia)
+                    except (OSError, subprocess.SubprocessError) as e:
+                        # Um pico que não deu para recortar não pode parar a live.
+                        log.warning("Live %s: falha ao recortar um pico (%s).", self.meta["id"],
+                                    explicar_falha(e))
+                        p["pico"]["resultado"] = f"Erro: {explicar_falha(e)}"
 
                 # Buffer circular: apaga o que ficou velho e não está reservado.
                 corte_min = agora - lv["buffer_min"] * 60

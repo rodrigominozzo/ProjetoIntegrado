@@ -1803,3 +1803,21 @@ def test_modelo_nvidia_fora_do_ar_troca_sozinho(monkeypatch):
     assert pedidos == ["google/gemma-4-31b-it", ia.SUBSTITUTOS_NVIDIA[0]]
     ia._pedir_compativel("google/gemma-4-31b-it", "s", conteudo, esquema, ia.PROVEDORES["nvidia"])
     assert pedidos[-1] == ia.SUBSTITUTOS_NVIDIA[0]                        # lembra a troca
+
+
+def test_live_sobrevive_a_falta_de_memoria(tmp_path, monkeypatch):
+    """25/11/2026: WinError 1455 ao abrir o ffmpeg para medir o volume derrubou a live inteira.
+    Agora a medida é pulada e o erro do pico vira uma frase curta."""
+    import subprocess as sp
+    from cortes import live as live_mod, sinais
+
+    m = MonitorLive("x", _cfg(tmp_path), Banco(tmp_path / "m.db"),
+                    meta={"id": "mem", "titulo": "t", "canal": "c", "url": ""}, chat=ChatFalso())
+    sem_memoria = OSError(22, "O arquivo de paginação é muito pequeno", None, 1455)
+    monkeypatch.setattr(sinais, "volume_por_segundo", lambda arq: (_ for _ in ()).throw(sem_memoria))
+    assert m._medir_volume([(0.0, tmp_path / "seg_g1_000001.ts")]) is None
+    assert "sem memória" in live_mod.explicar_falha(sem_memoria)
+    falha = sp.CalledProcessError(3752568763, ["ffmpeg", "-v", "error", "-filter_complex", "x" * 5000])
+    texto = live_mod.explicar_falha(falha)
+    assert "ffmpeg" in texto and "memória" in texto and len(texto) < 200
+    m._fechar_registro()
